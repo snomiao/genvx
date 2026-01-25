@@ -21,6 +21,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.keys
 # Note: .env.*.encrypted files are NOT ignored (they should be committed)
 
+# denvx gitstore directory
+.denvx
+
 # caches
 .eslintcache
 .cache

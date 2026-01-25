@@ -9,6 +9,8 @@ A CLI tool to automatically sync encrypted environment files using dotenvx.
 - 🤝 Conflict resolution (keeps both values in .local file with comments)
 - 📦 System-wide installation via `bun link`
 - 🎯 Built with Bun and yargs
+- ☁️ **Remote gitstore** - Store encrypted files in a separate git repository
+- 🔀 **Branch isolation** - Each project gets its own branch based on git remote hash
 
 ## Installation
 
@@ -88,14 +90,68 @@ The sync command will:
 - ✅ Only commit `.env.[name].encrypted` files
 - 🔑 Back up your `.env.keys` file securely
 
+## Using Gitstore (Remote Storage)
+
+You can store your encrypted `.env` files in a separate git repository instead of your project repo. This is useful for:
+- Centralized secret management across multiple projects
+- Keeping secrets completely separate from code
+- Easier secret rotation and auditing
+
+### Configuration Priority
+
+1. **CLI flag** (highest priority): `--gitstore=<url>`
+2. **Environment variable**: `DENVX_GITSTORE=<url>`
+3. **Local .env.local file**: `DENVX_GITSTORE=<url>`
+
+### How it works
+
+When you specify a gitstore:
+1. denvx clones the gitstore repo to `./.denvx/gitstore` (gitignored)
+2. Calculates a unique branch ID from your project's git remote URL (first 12 chars of SHA256)
+3. Stores/retrieves encrypted files from that branch
+4. Each project gets its own isolated branch in the gitstore
+
+### Gitstore Structure
+
+```
+secrets-repo/
+├── branch: a1b2c3d4e5f6  (project 1, auto-calculated from git remote)
+│   ├── .env.prod.encrypted
+│   └── .env.dev.encrypted
+├── branch: f6e5d4c3b2a1  (project 2, different git remote)
+│   ├── .env.prod.encrypted
+│   └── .env.staging.encrypted
+```
+
+### Examples with Gitstore
+
+```bash
+# Using CLI flag
+denvx --gitstore=https://github.com/user/secrets.git encrypt prod
+denvx --gitstore=https://github.com/user/secrets.git decrypt prod
+denvx --gitstore=https://github.com/user/secrets.git sync
+
+# Using environment variable
+export DENVX_GITSTORE=https://github.com/user/secrets.git
+denvx encrypt prod
+denvx decrypt dev
+denvx sync
+
+# Using .env.local (add this line to your .env.local)
+# DENVX_GITSTORE=https://github.com/user/secrets.git
+denvx sync
+```
+
 ## Examples
 
 ```bash
-# Encrypt production secrets
+# Encrypt production secrets (local storage)
 denvx encrypt prod
+denvx enc prod  # short alias
 
-# Decrypt development secrets
+# Decrypt development secrets (local storage)
 denvx decrypt dev
+denvx dec dev  # short alias
 
 # Sync all environment files
 denvx sync

@@ -1,6 +1,6 @@
 {
   "name": "denvx",
-  "publishConfig":{
+  "publishConfig": {
     "access": "public"
   },
   "version": "0.0.0",
@@ -13,7 +13,8 @@
     "execa": "^9.5.2"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/yargs": "^17.0.35"
   },
   "peerDependencies": {
     "typescript": "^5"
