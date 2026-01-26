@@ -20,14 +20,28 @@ A simple CLI tool to sync `.env*` files across projects using a private git repo
 ## Installation
 
 ```bash
+# Install globally via npm
+npm i -g genvx
+
+# Or via bun
+bun install -g genvx
+
+# Now you can use genvx anywhere
+genvx --help
+```
+
+### Development Setup
+
+```bash
+# Clone the repo
+git clone https://github.com/snomiao/genvx.git
+cd genvx
+
 # Install dependencies
 bun install
 
 # Link globally for system-wide access
 bun link
-
-# Now you can use genvx anywhere
-genvx --help
 ```
 
 ## Configuration
