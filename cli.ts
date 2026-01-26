@@ -94,7 +94,7 @@ async function syncGitstore(gitstoreUrl: string): Promise<string> {
   const gitstorePath = "./.denvx/gitstore";
 
   if (!existsSync(gitstorePath)) {
-    console.log(`Cloning gitstore from ${gitstoreUrl}...`);
+    console.log(`Cloning gitstore...`);
     try {
       await execaCommand(`git clone ${gitstoreUrl} ${gitstorePath}`, {
         shell: true,
