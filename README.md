@@ -8,7 +8,7 @@ A simple CLI tool to sync `.env*` files across projects using a private git repo
 - ☁️ **Private gitstore** - Store env files in a private git repository
 - 📁 **Organized storage** - Files stored by `{host}/{owner}/{repo}` structure
 - 🚀 **Simple** - No encryption, just git + file sync
-- 🧹 **Clean** - Temporary `.denvx` folder is auto-cleaned after operations
+- 🧹 **Clean** - Temporary `node_modules/.genvx` folder is auto-cleaned after operations
 
 ## Why?
 
@@ -35,17 +35,17 @@ denvx --help
 Set your gitstore (private repo) URL via one of these methods (priority order):
 
 1. **CLI flag**: `--gitstore=<url>` (highest priority)
-2. **Environment variable**: `export DENVX_STORE=<url>`
-3. **Project `.env.local`**: `DENVX_STORE=<url>` (in current directory)
-4. **Global config**: `~/.denvx/.env.local` with `DENVX_STORE=<url>` (lowest priority)
+2. **Environment variable**: `export GENVX_STORE=<url>`
+3. **Project `.env.local`**: `GENVX_STORE=<url>` (in current directory)
+4. **Global config**: `~/node_modules/.genvx/.env.local` with `GENVX_STORE=<url>` (lowest priority)
 
 ### Global Configuration
 
 For convenience, you can set a default gitstore URL globally:
 
 ```bash
-mkdir -p ~/.denvx
-echo "DENVX_STORE=https://github.com/youruser/envs.git" > ~/.denvx/.env.local
+mkdir -p ~/node_modules/.genvx
+echo "GENVX_STORE=https://github.com/youruser/envs.git" > ~/node_modules/.genvx/.env.local
 ```
 
 This will be used as a fallback for all projects that don't have their own configuration.
@@ -109,16 +109,16 @@ gitstore-repo/
 
 ### Workflow
 
-1. **Clone/Pull**: denvx clones your gitstore to `./.denvx/gitstore` (temporary)
+1. **Clone/Pull**: denvx clones your gitstore to `./node_modules/.genvx/gitstore` (temporary)
 2. **Sync Files**: Copies `.env*` files to/from `{host}/{owner}/{repo}/` path
 3. **Commit/Push**: Commits and pushes changes to gitstore
-4. **Cleanup**: Removes `./.denvx` directory
+4. **Cleanup**: Removes `./node_modules/.genvx` directory
 
 ## Examples
 
 ```bash
 # Configure gitstore via environment variable
-export DENVX_STORE=git@github.com:yourusername/my-env-store.git
+export GENVX_STORE=git@github.com:yourusername/my-env-store.git
 
 # Push your env files
 denvx push
@@ -137,7 +137,7 @@ denvx --gitstore=git@github.com:company/envs.git sync
 
 - ⚠️ **Use a private repository** for your gitstore
 - ⚠️ Never commit `.env*` files to your project repos
-- ✅ Your env files are stored in `.denvx/gitstore/{host}/{owner}/{repo}/`
+- ✅ Your env files are stored in `node_modules/.genvx/gitstore/{host}/{owner}/{repo}/`
 - 🔒 The gitstore should only be accessible to you/your team
 
 ## File Structure
@@ -148,7 +148,7 @@ your-project/
 ├── .env.local          # Gitignored
 ├── .env.prod.local     # Gitignored
 ├── .env.dev.local      # Gitignored
-└── .denvx/             # Temporary, cleaned after operations
+└── node_modules/.genvx/             # Temporary, cleaned after operations
 ```
 
 ### Gitstore Repository

@@ -1,11 +1,11 @@
 {
-  "name": "denvx",
+  "name": "genvx",
   "publishConfig": {
     "access": "public"
   },
   "version": "0.0.0",
   "bin": {
-    "denvx": "./cli.ts"
+    "genvx": "./cli.ts"
   },
   "dependencies": {
     "yargs": "^17.7.2",

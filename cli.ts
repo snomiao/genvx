@@ -2,8 +2,24 @@
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, unlinkSync } from "fs";
+import { existsSync } from "fs";
+import { readFile, writeFile, copyFile, mkdir, rm, unlink, chmod } from "fs/promises";
 import { join } from "path";
+import { platform } from "os";
+
+// Ensure file has secure permissions (600)
+async function ensureSecurePermissions(filePath: string) {
+  const isWindows = platform() === "win32";
+
+  try {
+    await chmod(filePath, 0o600);
+  } catch (error) {
+    // Only ignore chmod errors on Windows
+    if (!isWindows) {
+      throw new Error(`Failed to set secure permissions (600) on ${filePath}: ${error}`);
+    }
+  }
+}
 
 // Parse git remote URL to extract host, owner, and repo
 function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo: string } {
@@ -40,31 +56,34 @@ async function getGitRemote(): Promise<string> {
 }
 
 // Get gitstore configuration
-function getGitstoreConfig(cliGitstore?: string): string | null {
+async function getGitstoreConfig(cliGitstore?: string): Promise<string | null> {
   // Priority 1: CLI flag
   if (cliGitstore) {
     return cliGitstore;
   }
 
   // Priority 2: Environment variable
-  if (process.env.DENVX_STORE) {
-    return process.env.DENVX_STORE;
+  if (process.env.GENVX_STORE) {
+    return process.env.GENVX_STORE;
   }
 
   // Priority 3: Project .env.local file
   if (existsSync(".env.local")) {
-    const content = readFileSync(".env.local", "utf-8");
-    const match = content.match(/^DENVX_STORE=(.+)$/m);
+    const content = await readFile(".env.local", "utf-8");
+    const match = content.match(/^GENVX_STORE=(.+)$/m);
     if (match && match[1]) {
       return match[1].replace(/^["']|["']$/g, "");
     }
   }
 
-  // Priority 4: Global ~/.denvx/.env.local file (fallback)
-  const globalConfigPath = join(process.env.HOME || "/root", ".denvx", ".env.local");
+  // Priority 4: Global ~/.genvx/.env.local file (fallback)
+  const globalConfigPath = join(process.env.HOME || "/root", ".genvx", ".env.local");
   if (existsSync(globalConfigPath)) {
-    const content = readFileSync(globalConfigPath, "utf-8");
-    const match = content.match(/^DENVX_STORE=(.+)$/m);
+    // Ensure secure permissions on global config
+    await ensureSecurePermissions(globalConfigPath);
+
+    const content = await readFile(globalConfigPath, "utf-8");
+    const match = content.match(/^GENVX_STORE=(.+)$/m);
     if (match && match[1]) {
       return match[1].replace(/^["']|["']$/g, "");
     }
@@ -73,34 +92,34 @@ function getGitstoreConfig(cliGitstore?: string): string | null {
   return null;
 }
 
-// Setup .denvx directory
-function setupDenvxDir() {
-  const denvxDir = "./.denvx";
+// Setup .genvx directory
+async function setupDenvxDir() {
+  const denvxDir = "./node_modules/.genvx";
   const gitignorePath = join(denvxDir, ".gitignore");
 
   if (!existsSync(denvxDir)) {
-    mkdirSync(denvxDir, { recursive: true });
+    await mkdir(denvxDir, { recursive: true });
   }
 
   if (!existsSync(gitignorePath)) {
-    writeFileSync(gitignorePath, "*\n");
+    await writeFile(gitignorePath, "*\n");
   }
 }
 
 // Clone or pull gitstore repository
 async function syncGitstore(gitstoreUrl: string): Promise<string> {
-  setupDenvxDir();
+  await setupDenvxDir();
 
-  const gitstorePath = "./.denvx/gitstore";
+  const gitstorePath = "./node_modules/.genvx/gitstore";
 
   if (!existsSync(gitstorePath)) {
     try {
-      await execaCommand(`git clone -q ${gitstoreUrl} ${gitstorePath}`, {
+      await execaCommand(`git clone --depth 1 -q ${gitstoreUrl} ${gitstorePath}`, {
         shell: true
       });
     } catch (error) {
       // Initialize an empty repo
-      mkdirSync(gitstorePath, { recursive: true });
+      await mkdir(gitstorePath, { recursive: true });
       await execaCommand(`cd ${gitstorePath} && git init -q`, { shell: true });
       await execaCommand(`cd ${gitstorePath} && git remote add origin ${gitstoreUrl}`, { shell: true });
       // Create initial commit
@@ -130,7 +149,7 @@ async function getProjectPath(gitstorePath: string): Promise<string> {
   return join(gitstorePath, host, owner, repo);
 }
 
-// Find all .env* files recursively, skipping git repos
+// Find all .env* files recursively, skipping git repos and common build/dependency directories
 async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
   const { readdirSync, statSync } = await import("fs");
   const { join: pathJoin } = await import("path");
@@ -138,6 +157,26 @@ async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<
   // Convert glob pattern to regex
   const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
   const results: string[] = [];
+
+  // Directories to skip (common build/dependency/cache directories)
+  const skipDirs = new Set([
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    ".output",
+    ".cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    "target",
+    "vendor",
+    ".genvx"
+  ]);
 
   function searchDirectory(dirPath: string, relativePath: string = "") {
     try {
@@ -151,9 +190,8 @@ async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<
           const stat = statSync(fullPath);
 
           if (stat.isDirectory()) {
-            // Skip if this directory is a git repo
-            const gitPath = pathJoin(fullPath, ".git");
-            if (!existsSync(gitPath)) {
+            // Skip common directories and git repos
+            if (!skipDirs.has(entry) && !existsSync(pathJoin(fullPath, ".git"))) {
               searchDirectory(fullPath, relPath);
             }
           } else if (stat.isFile() && regex.test(entry)) {
@@ -181,7 +219,7 @@ async function pushToGitstore(gitstoreUrl: string) {
 
   // Create project directory if it doesn't exist
   if (!existsSync(projectPath)) {
-    mkdirSync(projectPath, { recursive: true });
+    await mkdir(projectPath, { recursive: true });
   }
 
   // Find all local .env* files
@@ -193,12 +231,15 @@ async function pushToGitstore(gitstoreUrl: string) {
 
   // Copy each file to gitstore
   for (const file of localFiles) {
+    // Ensure secure permissions on local file before pushing
+    await ensureSecurePermissions(file);
+
     const destPath = join(projectPath, file);
     const destDir = join(destPath, "..");
     if (!existsSync(destDir)) {
-      mkdirSync(destDir, { recursive: true });
+      await mkdir(destDir, { recursive: true });
     }
-    copyFileSync(file, destPath);
+    await copyFile(file, destPath);
     console.log(`→ ${file}`);
   }
 
@@ -249,9 +290,13 @@ async function pullFromGitstore(gitstoreUrl: string) {
     const destPath = file;
     const destDir = join(destPath, "..");
     if (!existsSync(destDir)) {
-      mkdirSync(destDir, { recursive: true });
+      await mkdir(destDir, { recursive: true });
     }
-    copyFileSync(sourcePath, destPath);
+    await copyFile(sourcePath, destPath);
+
+    // Set secure permissions on pulled .env files
+    await ensureSecurePermissions(destPath);
+
     console.log(`← ${file}`);
   }
 }
@@ -265,31 +310,15 @@ async function syncWithGitstore(gitstoreUrl: string) {
 
   // Create project directory if it doesn't exist
   if (!existsSync(projectPath)) {
-    mkdirSync(projectPath, { recursive: true });
-  }
-
-  // First, pull files from gitstore that don't exist locally
-  const remoteFiles = existsSync(projectPath)
-    ? await findEnvFiles(".env*", projectPath)
-    : [];
-
-  for (const file of remoteFiles) {
-    const localPath = file;
-    if (!existsSync(localPath)) {
-      const localDir = join(localPath, "..");
-      if (!existsSync(localDir)) {
-        mkdirSync(localDir, { recursive: true });
-      }
-      copyFileSync(join(projectPath, file), localPath);
-      console.log(`← ${file}`);
-    }
+    await mkdir(projectPath, { recursive: true });
   }
 
   // Clean project directory in gitstore (remove all .env* files)
+  // This allows deletions to be synced - deleted local files won't be restored
   if (existsSync(projectPath)) {
     const filesToRemove = await findEnvFiles(".env*", projectPath);
     for (const file of filesToRemove) {
-      unlinkSync(join(projectPath, file));
+      await unlink(join(projectPath, file));
     }
   }
 
@@ -301,12 +330,15 @@ async function syncWithGitstore(gitstoreUrl: string) {
   }
 
   for (const file of localFiles) {
+    // Set secure permissions on local .env files
+    await ensureSecurePermissions(file);
+
     const destPath = join(projectPath, file);
     const destDir = join(destPath, "..");
     if (!existsSync(destDir)) {
-      mkdirSync(destDir, { recursive: true });
+      await mkdir(destDir, { recursive: true });
     }
-    copyFileSync(file, destPath);
+    await copyFile(file, destPath);
   }
 
   // Use git status to detect changes (with rename detection)
@@ -361,12 +393,12 @@ async function syncWithGitstore(gitstoreUrl: string) {
   }
 }
 
-// Cleanup .denvx directory
-function cleanup() {
-  const denvxDir = "./.denvx";
+// Cleanup .genvx directory
+async function cleanup() {
+  const denvxDir = "./node_modules/.genvx";
   if (existsSync(denvxDir)) {
     try {
-      rmSync(denvxDir, { recursive: true, force: true });
+      await rm(denvxDir, { recursive: true, force: true });
     } catch (error) {
       // Silent fail - not critical
     }
@@ -387,14 +419,35 @@ yargs(hideBin(process.argv))
     "Sync .env* files bidirectionally with gitstore (default)",
     () => {},
     async (argv) => {
-      const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
+      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        console.error("Error: GENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
+
+      // Check if we're inside a gitstore directory
+      const cwd = process.cwd();
+      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+        console.error("Error: Cannot run genvx inside the gitstore directory");
+        process.exit(1);
+      }
+
+      // Check if current repo is the gitstore itself
+      try {
+        const currentRemote = await getGitRemote();
+        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+        if (normalizedCurrent === normalizedGitstore) {
+          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+          process.exit(1);
+        }
+      } catch {
+        // Not in a git repo, that's fine - will error later if needed
+      }
+
       await syncWithGitstore(gitstore);
-      cleanup();
+      await cleanup();
     }
   )
   .command(
@@ -402,14 +455,34 @@ yargs(hideBin(process.argv))
     "Push .env* files to gitstore",
     () => {},
     async (argv) => {
-      const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
+      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        console.error("Error: GENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
+
+      // Check if we're inside gitstore
+      const cwd = process.cwd();
+      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+        console.error("Error: Cannot run genvx inside the gitstore directory");
+        process.exit(1);
+      }
+
+      try {
+        const currentRemote = await getGitRemote();
+        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+        if (normalizedCurrent === normalizedGitstore) {
+          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+          process.exit(1);
+        }
+      } catch {
+        // Not in a git repo, that's fine
+      }
+
       await pushToGitstore(gitstore);
-      cleanup();
+      await cleanup();
     }
   )
   .command(
@@ -417,14 +490,34 @@ yargs(hideBin(process.argv))
     "Pull .env* files from gitstore",
     () => {},
     async (argv) => {
-      const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
+      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        console.error("Error: GENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
+
+      // Check if we're inside gitstore
+      const cwd = process.cwd();
+      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+        console.error("Error: Cannot run genvx inside the gitstore directory");
+        process.exit(1);
+      }
+
+      try {
+        const currentRemote = await getGitRemote();
+        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+        if (normalizedCurrent === normalizedGitstore) {
+          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+          process.exit(1);
+        }
+      } catch {
+        // Not in a git repo, that's fine
+      }
+
       await pullFromGitstore(gitstore);
-      cleanup();
+      await cleanup();
     }
   )
   .example("$0", "Sync .env* files (default command)")
