@@ -329,7 +329,7 @@ function cleanup() {
 }
 
 // Setup yargs CLI
-const argv = yargs(hideBin(process.argv))
+yargs(hideBin(process.argv))
   .scriptName("denvx")
   .usage("$0 [command] [options]")
   .option("gitstore", {
@@ -338,7 +338,7 @@ const argv = yargs(hideBin(process.argv))
     description: "Git repository URL for storing env files",
   })
   .command(
-    ["sync", "s"],
+    ["$0", "sync", "s"],
     "Sync .env* files bidirectionally with gitstore (default)",
     () => {},
     async (argv) => {
@@ -390,18 +390,4 @@ const argv = yargs(hideBin(process.argv))
   .alias("h", "help")
   .version()
   .alias("v", "version")
-  .parseAsync();
-
-// If no command specified, run sync by default
-argv.then(async (args) => {
-  if (args._.length === 0 && !args.help && !args.version) {
-    const gitstore = getGitstoreConfig(args.gitstore as string | undefined);
-    if (!gitstore) {
-      console.error("Error: DENVX_STORE not configured");
-      console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
-      process.exit(1);
-    }
-    await syncWithGitstore(gitstore);
-    cleanup();
-  }
-});
+  .parse();
