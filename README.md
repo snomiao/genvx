@@ -1,16 +1,21 @@
 # denvx
 
-A CLI tool to automatically sync encrypted environment files using dotenvx.
+A simple CLI tool to sync `.env*` files across projects using a private git repository.
 
 ## Features
 
-- 🔐 Encrypt/decrypt `.env.[name].local` files to/from `.env.[name].encrypted`
-- 🔄 Auto-sync based on file modification times
-- 🤝 Conflict resolution (keeps both values in .local file with comments)
-- 📦 System-wide installation via `bun link`
-- 🎯 Built with Bun and yargs
-- ☁️ **Remote gitstore** - Store encrypted files in a separate git repository
-- 🔀 **Branch isolation** - Each project gets its own branch based on git remote hash
+- 🔄 **Bidirectional sync** - Push, pull, or sync `.env*` files
+- ☁️ **Private gitstore** - Store env files in a private git repository
+- 📁 **Organized storage** - Files stored by `{host}/{owner}/{repo}` structure
+- 🚀 **Simple** - No encryption, just git + file sync
+- 🧹 **Clean** - Temporary `.denvx` folder is auto-cleaned after operations
+
+## Why?
+
+- Share env files across your machines easily
+- Backup sensitive env files securely in a private repo
+- No need for local `.env.*.encrypted` files
+- Simpler than encryption-based solutions (just use a private repo!)
 
 ## Installation
 
@@ -25,146 +30,153 @@ bun link
 denvx --help
 ```
 
+## Configuration
+
+Set your gitstore (private repo) URL via one of these methods (priority order):
+
+1. **CLI flag**: `--gitstore=<url>` (highest priority)
+2. **Environment variable**: `export DENVX_STORE=<url>`
+3. **Project `.env.local`**: `DENVX_STORE=<url>` (in current directory)
+4. **Global config**: `~/.denvx/.env.local` with `DENVX_STORE=<url>` (lowest priority)
+
+### Global Configuration
+
+For convenience, you can set a default gitstore URL globally:
+
+```bash
+mkdir -p ~/.denvx
+echo "DENVX_STORE=https://github.com/youruser/envs.git" > ~/.denvx/.env.local
+```
+
+This will be used as a fallback for all projects that don't have their own configuration.
+
 ## Usage
 
-### Encrypt a local file
+### Push env files to gitstore
 
 ```bash
-# Create an unencrypted environment file
-echo "DATABASE_URL=postgres://localhost:5432/mydb" > .env.prod.local
+# Push all .env* files to gitstore
+denvx push
 
-# Encrypt it
-denvx encrypt prod
-
-# This creates .env.prod.encrypted and .env.keys
+# Or use short alias
+denvx p
 ```
 
-### Decrypt an encrypted file
+### Pull env files from gitstore
 
 ```bash
-# Decrypt an encrypted file
-denvx decrypt prod
-
-# This creates/updates .env.prod.local
+# Pull all .env* files from gitstore
+denvx pull
 ```
 
-### Sync files automatically
+### Sync bidirectionally
 
 ```bash
-# Sync a specific environment
-denvx sync prod
-
-# Sync all .env.*.local files
+# Sync based on modification times
 denvx sync
+
+# Or use short alias
+denvx s
 ```
 
 The sync command will:
-- If only `.local` exists: encrypt it to `.encrypted`
-- If only `.encrypted` exists: decrypt it to `.local`
-- If both exist: sync the newer file to the older one
-- On conflicts: keep both values in `.local` with comments
-
-## File Structure
-
-```
-.
-├── .env.prod.local      # Unencrypted (gitignored)
-├── .env.prod.encrypted  # Encrypted (committed to git)
-├── .env.dev.local       # Unencrypted (gitignored)
-├── .env.dev.encrypted   # Encrypted (committed to git)
-└── .env.keys            # Private keys (gitignored)
-```
+- Pull files that only exist in gitstore
+- Push files that only exist locally
+- Compare modification times for files that exist in both places
+- Sync the newer version
 
 ## How it works
 
-1. **Local files** (`.env.[name].local`) are unencrypted and gitignored
-2. **Encrypted files** (`.env.[name].encrypted`) are encrypted and committed to git
-3. **Keys file** (`.env.keys`) contains private encryption keys and is gitignored
-4. When syncing, the tool compares modification times and syncs accordingly
-5. On conflicts, both values are kept in the `.local` file with comments
-
-## Security Notes
-
-- ⚠️ Never commit `.env.[name].local` files to git
-- ⚠️ Never commit `.env.keys` to git
-- ✅ Only commit `.env.[name].encrypted` files
-- 🔑 Back up your `.env.keys` file securely
-
-## Using Gitstore (Remote Storage)
-
-You can store your encrypted `.env` files in a separate git repository instead of your project repo. This is useful for:
-- Centralized secret management across multiple projects
-- Keeping secrets completely separate from code
-- Easier secret rotation and auditing
-
-### Configuration Priority
-
-1. **CLI flag** (highest priority): `--gitstore=<url>`
-2. **Environment variable**: `DENVX_GITSTORE=<url>`
-3. **Local .env.local file**: `DENVX_GITSTORE=<url>`
-
-### How it works
-
-When you specify a gitstore:
-1. denvx clones the gitstore repo to `./.denvx/gitstore` (gitignored)
-2. Calculates a unique branch ID from your project's git remote URL (first 12 chars of SHA256)
-3. Stores/retrieves encrypted files from that branch
-4. Each project gets its own isolated branch in the gitstore
-
 ### Gitstore Structure
 
+Your private gitstore repository will be organized like this:
+
 ```
-secrets-repo/
-├── branch: a1b2c3d4e5f6  (project 1, auto-calculated from git remote)
-│   ├── .env.prod.encrypted
-│   └── .env.dev.encrypted
-├── branch: f6e5d4c3b2a1  (project 2, different git remote)
-│   ├── .env.prod.encrypted
-│   └── .env.staging.encrypted
+gitstore-repo/
+├── github.com/
+│   ├── snomiao/
+│   │   ├── project1/
+│   │   │   ├── .env.prod.local
+│   │   │   └── .env.dev.local
+│   │   └── project2/
+│   │       └── .env.prod.local
+│   └── otheruser/
+│       └── project3/
+│           └── .env.local
+└── gitlab.com/
+    └── ...
 ```
 
-### Examples with Gitstore
+### Workflow
 
-```bash
-# Using CLI flag
-denvx --gitstore=https://github.com/user/secrets.git encrypt prod
-denvx --gitstore=https://github.com/user/secrets.git decrypt prod
-denvx --gitstore=https://github.com/user/secrets.git sync
-
-# Using environment variable
-export DENVX_GITSTORE=https://github.com/user/secrets.git
-denvx encrypt prod
-denvx decrypt dev
-denvx sync
-
-# Using .env.local (add this line to your .env.local)
-# DENVX_GITSTORE=https://github.com/user/secrets.git
-denvx sync
-```
+1. **Clone/Pull**: denvx clones your gitstore to `./.denvx/gitstore` (temporary)
+2. **Sync Files**: Copies `.env*` files to/from `{host}/{owner}/{repo}/` path
+3. **Commit/Push**: Commits and pushes changes to gitstore
+4. **Cleanup**: Removes `./.denvx` directory
 
 ## Examples
 
 ```bash
-# Encrypt production secrets (local storage)
-denvx encrypt prod
-denvx enc prod  # short alias
+# Configure gitstore via environment variable
+export DENVX_STORE=git@github.com:yourusername/my-env-store.git
 
-# Decrypt development secrets (local storage)
-denvx decrypt dev
-denvx dec dev  # short alias
+# Push your env files
+denvx push
 
-# Sync all environment files
+# On another machine, pull them
+denvx pull
+
+# Or just sync (automatically push/pull based on timestamps)
 denvx sync
 
-# Sync only production
-denvx sync prod
+# Use CLI flag to override
+denvx --gitstore=git@github.com:company/envs.git sync
 ```
+
+## Security Notes
+
+- ⚠️ **Use a private repository** for your gitstore
+- ⚠️ Never commit `.env*` files to your project repos
+- ✅ Your env files are stored in `.denvx/gitstore/{host}/{owner}/{repo}/`
+- 🔒 The gitstore should only be accessible to you/your team
+
+## File Structure
+
+### Local Project
+```
+your-project/
+├── .env.local          # Gitignored
+├── .env.prod.local     # Gitignored
+├── .env.dev.local      # Gitignored
+└── .denvx/             # Temporary, cleaned after operations
+```
+
+### Gitstore Repository
+```
+envs-repo/
+└── github.com/
+    └── yourname/
+        └── your-project/
+            ├── .env.local
+            ├── .env.prod.local
+            └── .env.dev.local
+```
+
+## Commands
+
+### `denvx push` (alias: `p`)
+Push all local `.env*` files to gitstore
+
+### `denvx pull`
+Pull all `.env*` files from gitstore to local
+
+### `denvx sync` (alias: `s`)
+Sync files bidirectionally based on modification times
 
 ## Development
 
 Built with:
 - [Bun](https://bun.sh) - Fast JavaScript runtime
-- [dotenvx](https://dotenvx.com) - Encrypted .env files
 - [yargs](https://yargs.js.org) - CLI argument parsing
 - [execa](https://github.com/sindresorhus/execa) - Process execution
 

@@ -2,126 +2,29 @@
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync, mkdirSync } from "fs";
-import { resolve, join } from "path";
-import { createHash } from "crypto";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync } from "fs";
+import { join } from "path";
 
-type EnvLine = { key: string; value: string; raw: string };
-
-function parseEnvFile(content: string): Map<string, EnvLine> {
-  const lines = content.split("\n");
-  const map = new Map<string, EnvLine>();
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const match = trimmed.match(/^([^=]+)=(.*)$/);
-    if (match) {
-      const [, key, value] = match;
-      map.set(key.trim(), { key: key.trim(), value, raw: line });
-    }
+// Parse git remote URL to extract host, owner, and repo
+function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo: string } {
+  // Normalize SSH URLs to HTTPS
+  let url = remoteUrl;
+  if (url.startsWith("git@")) {
+    // git@github.com:owner/repo.git -> https://github.com/owner/repo.git
+    url = url.replace(/^git@/, "https://").replace(/\.com:/, ".com/");
   }
 
-  return map;
-}
+  // Remove .git suffix
+  url = url.replace(/\.git$/, "");
 
-function mergeEnvFiles(localContent: string, decryptedContent: string): string {
-  const localMap = parseEnvFile(localContent);
-  const decryptedMap = parseEnvFile(decryptedContent);
-
-  const allKeys = new Set([...localMap.keys(), ...decryptedMap.keys()]);
-  const result: string[] = [];
-
-  for (const key of allKeys) {
-    const localLine = localMap.get(key);
-    const decryptedLine = decryptedMap.get(key);
-
-    if (localLine && decryptedLine) {
-      // Both exist - check for conflicts
-      if (localLine.value !== decryptedLine.value) {
-        result.push(`# Conflict: kept local value, encrypted had: ${decryptedLine.value}`);
-        result.push(localLine.raw);
-      } else {
-        result.push(localLine.raw);
-      }
-    } else if (localLine) {
-      // Only in local
-      result.push(localLine.raw);
-    } else if (decryptedLine) {
-      // Only in encrypted
-      result.push(decryptedLine.raw);
-    }
+  // Parse URL
+  const match = url.match(/https?:\/\/([^/]+)\/([^/]+)\/(.+)$/);
+  if (!match || !match[1] || !match[2] || !match[3]) {
+    throw new Error(`Invalid git remote URL: ${remoteUrl}`);
   }
 
-  return result.join("\n") + "\n";
-}
-
-async function findEnvFiles(pattern: string): Promise<string[]> {
-  const glob = new Bun.Glob(pattern);
-  const files: string[] = [];
-
-  for await (const file of glob.scan(".")) {
-    files.push(file);
-  }
-
-  return files;
-}
-
-function getEnvName(localFile: string): string {
-  const match = localFile.match(/\.env\.(.+)\.local$/);
-  return match ? match[1] : "";
-}
-
-// Gitstore configuration
-function getGitstoreConfig(cliGitstore?: string): string | null {
-  // Priority 1: CLI flag
-  if (cliGitstore) {
-    return cliGitstore;
-  }
-
-  // Priority 2: Environment variable
-  if (process.env.DENVX_GITSTORE) {
-    return process.env.DENVX_GITSTORE;
-  }
-
-  // Priority 3: .env.local file
-  if (existsSync(".env.local")) {
-    const content = readFileSync(".env.local", "utf-8");
-    const envMap = parseEnvFile(content);
-    const gitstoreVar = envMap.get("DENVX_GITSTORE");
-    if (gitstoreVar) {
-      return gitstoreVar.value.replace(/^["']|["']$/g, "");
-    }
-  }
-
-  return null;
-}
-
-// Redact credentials from URL for display
-function redactUrlCredentials(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    if (urlObj.username || urlObj.password) {
-      // Replace credentials with asterisks
-      return url.replace(/\/\/[^@]+@/, '//***@');
-    }
-    return url;
-  } catch {
-    // If URL parsing fails, try regex fallback
-    return url.replace(/\/\/[^@]+@/, '//***@');
-  }
-}
-
-// Normalize git remote URL (git@github.com:user/repo.git -> https://github.com/user/repo.git)
-function normalizeGitRemote(remote: string): string {
-  // Convert SSH format to HTTPS
-  if (remote.startsWith("git@")) {
-    return remote
-      .replace(/^git@/, "https://")
-      .replace(/\.com:/, ".com/");
-  }
-  return remote;
+  const [, host, owner, repo] = match;
+  return { host: host!, owner: owner!, repo: repo! };
 }
 
 // Get git remote URL for current repo
@@ -136,15 +39,42 @@ async function getGitRemote(): Promise<string> {
   }
 }
 
-// Calculate branch ID from git remote
-function calculateBranchId(gitRemote: string): string {
-  const normalized = normalizeGitRemote(gitRemote);
-  const hash = createHash("sha256").update(normalized).digest("hex");
-  return hash.slice(0, 12);
+// Get gitstore configuration
+function getGitstoreConfig(cliGitstore?: string): string | null {
+  // Priority 1: CLI flag
+  if (cliGitstore) {
+    return cliGitstore;
+  }
+
+  // Priority 2: Environment variable
+  if (process.env.DENVX_STORE) {
+    return process.env.DENVX_STORE;
+  }
+
+  // Priority 3: Project .env.local file
+  if (existsSync(".env.local")) {
+    const content = readFileSync(".env.local", "utf-8");
+    const match = content.match(/^DENVX_STORE=(.+)$/m);
+    if (match && match[1]) {
+      return match[1].replace(/^["']|["']$/g, "");
+    }
+  }
+
+  // Priority 4: Global ~/.denvx/.env.local file (fallback)
+  const globalConfigPath = join(process.env.HOME || "/root", ".denvx", ".env.local");
+  if (existsSync(globalConfigPath)) {
+    const content = readFileSync(globalConfigPath, "utf-8");
+    const match = content.match(/^DENVX_STORE=(.+)$/m);
+    if (match && match[1]) {
+      return match[1].replace(/^["']|["']$/g, "");
+    }
+  }
+
+  return null;
 }
 
 // Setup .denvx directory
-async function setupDenvxDir() {
+function setupDenvxDir() {
   const denvxDir = "./.denvx";
   const gitignorePath = join(denvxDir, ".gitignore");
 
@@ -157,336 +87,305 @@ async function setupDenvxDir() {
   }
 }
 
-// Clone or sync gitstore repository
-async function syncGitstore(gitstoreUrl: string, branchId: string): Promise<string> {
-  await setupDenvxDir();
+// Clone or pull gitstore repository
+async function syncGitstore(gitstoreUrl: string): Promise<string> {
+  setupDenvxDir();
 
   const gitstorePath = "./.denvx/gitstore";
 
   if (!existsSync(gitstorePath)) {
-    console.log(`Cloning gitstore from ${redactUrlCredentials(gitstoreUrl)}...`);
+    console.log(`Cloning gitstore from ${gitstoreUrl}...`);
     try {
       await execaCommand(`git clone ${gitstoreUrl} ${gitstorePath}`, {
         shell: true,
         stdio: 'inherit'
       });
     } catch (error) {
-      console.log(`Repository doesn't exist yet, will create it when pushing...`);
+      console.log(`Repository doesn't exist yet, initializing...`);
       // Initialize an empty repo
       mkdirSync(gitstorePath, { recursive: true });
       await execaCommand(`cd ${gitstorePath} && git init`, { shell: true });
       await execaCommand(`cd ${gitstorePath} && git remote add origin ${gitstoreUrl}`, { shell: true });
+      // Create initial commit
+      await execaCommand(`cd ${gitstorePath} && git commit --allow-empty -m "Initial commit"`, { shell: true });
+      try {
+        await execaCommand(`cd ${gitstorePath} && git push -u origin HEAD`, { shell: true, stdio: 'inherit' });
+      } catch {
+        // Remote might not exist yet, that's ok
+      }
     }
-  }
-
-  // Fetch and checkout/create branch
-  try {
-    await execaCommand(`cd ${gitstorePath} && git fetch origin`, { shell: true });
-
-    // Try to checkout existing branch or create new one
+  } else {
+    // Pull latest changes
     try {
-      await execaCommand(`cd ${gitstorePath} && git checkout ${branchId}`, { shell: true });
-      await execaCommand(`cd ${gitstorePath} && git pull origin ${branchId}`, { shell: true });
+      await execaCommand(`cd ${gitstorePath} && git pull origin HEAD`, { shell: true });
     } catch {
-      // Branch doesn't exist, create it
-      await execaCommand(`cd ${gitstorePath} && git checkout -b ${branchId}`, { shell: true });
+      // Might fail if remote doesn't exist yet, that's ok
     }
-  } catch (error) {
-    // Remote doesn't exist yet, that's ok
-    console.log(`Creating new branch ${branchId}...`);
-    await execaCommand(`cd ${gitstorePath} && git checkout -b ${branchId}`, { shell: true });
   }
 
   return gitstorePath;
 }
 
-// Push changes to gitstore
-async function pushGitstore(gitstorePath: string, branchId: string, message: string) {
+// Get the project's path within gitstore
+async function getProjectPath(gitstorePath: string): Promise<string> {
+  const gitRemote = await getGitRemote();
+  const { host, owner, repo } = parseGitRemote(gitRemote);
+  return join(gitstorePath, host, owner, repo);
+}
+
+// Find all .env* files
+async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
+  const { readdirSync } = await import("fs");
+
+  // Convert glob pattern to regex
+  const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+
+  try {
+    const files = readdirSync(searchPath).filter((f) => regex.test(f));
+    return files;
+  } catch (error) {
+    return [];
+  }
+}
+
+// Push .env* files to gitstore
+async function pushToGitstore(gitstoreUrl: string) {
+  console.log("Pushing .env* files to gitstore...");
+
+  // Sync gitstore
+  const gitstorePath = await syncGitstore(gitstoreUrl);
+  const projectPath = await getProjectPath(gitstorePath);
+
+  // Create project directory if it doesn't exist
+  if (!existsSync(projectPath)) {
+    mkdirSync(projectPath, { recursive: true });
+  }
+
+  // Find all local .env* files
+  const localFiles = await findEnvFiles(".env*");
+
+  if (localFiles.length === 0) {
+    console.log("No .env* files found to push");
+    return;
+  }
+
+  // Copy each file to gitstore
+  for (const file of localFiles) {
+    const destPath = join(projectPath, file);
+    copyFileSync(file, destPath);
+    console.log(`✓ Copied ${file} to gitstore`);
+  }
+
+  // Commit and push
   try {
     await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
 
     // Check if there are changes to commit
     try {
       await execaCommand(`cd ${gitstorePath} && git diff-index --quiet HEAD`, { shell: true });
-      console.log("No changes to push to gitstore");
+      console.log("No changes to push");
       return;
     } catch {
       // There are changes, proceed with commit
     }
 
-    await execaCommand(`cd ${gitstorePath} && git commit -m "${message}"`, { shell: true });
-    await execaCommand(`cd ${gitstorePath} && git push -u origin ${branchId}`, {
+    const gitRemote = await getGitRemote();
+    const { owner, repo } = parseGitRemote(gitRemote);
+    await execaCommand(`cd ${gitstorePath} && git commit -m "Update ${owner}/${repo} env files"`, { shell: true });
+    await execaCommand(`cd ${gitstorePath} && git push origin HEAD`, {
       shell: true,
       stdio: 'inherit'
     });
-    console.log(`✓ Pushed to gitstore branch ${branchId}`);
+    console.log("✓ Pushed to gitstore");
   } catch (error) {
     console.error("Failed to push to gitstore:", error);
   }
 }
 
-async function encryptEnvFile(name: string, gitstoreUrl?: string) {
-  const localFile = `.env.${name}.local`;
-  let encryptedFile = `.env.${name}.encrypted`;
+// Pull .env* files from gitstore
+async function pullFromGitstore(gitstoreUrl: string) {
+  console.log("Pulling .env* files from gitstore...");
 
-  if (!existsSync(localFile)) {
-    console.error(`Error: ${localFile} does not exist`);
-    process.exit(1);
-  }
+  // Sync gitstore
+  const gitstorePath = await syncGitstore(gitstoreUrl);
+  const projectPath = await getProjectPath(gitstorePath);
 
-  let gitstorePath: string | null = null;
-  let branchId: string | null = null;
-
-  if (gitstoreUrl) {
-    // Using gitstore
-    const gitRemote = await getGitRemote();
-    branchId = calculateBranchId(gitRemote);
-    gitstorePath = await syncGitstore(gitstoreUrl, branchId);
-    encryptedFile = join(gitstorePath, `.env.${name}.encrypted`);
-    console.log(`Using gitstore on branch ${branchId}`);
-  }
-
-  console.log(`Encrypting ${localFile} to ${encryptedFile}...`);
-
-  try {
-    // Copy local to encrypted file first
-    copyFileSync(localFile, encryptedFile);
-
-    // Encrypt in place
-    await execaCommand(`bunx dotenvx encrypt -f ${encryptedFile}`, {
-      shell: true,
-      stdio: 'inherit'
-    });
-
-    console.log(`✓ Encrypted ${localFile} -> ${encryptedFile}`);
-
-    // If using gitstore, push changes
-    if (gitstorePath && branchId) {
-      await pushGitstore(gitstorePath, branchId, `Encrypt .env.${name}.encrypted`);
-    }
-  } catch (error) {
-    console.error(`Failed to encrypt ${localFile}:`, error);
-    process.exit(1);
-  }
-}
-
-async function decryptEnvFile(name: string, merge = false, gitstoreUrl?: string) {
-  const localFile = `.env.${name}.local`;
-  let encryptedFile = `.env.${name}.encrypted`;
-
-  let gitstorePath: string | null = null;
-  let branchId: string | null = null;
-
-  if (gitstoreUrl) {
-    // Using gitstore
-    const gitRemote = await getGitRemote();
-    branchId = calculateBranchId(gitRemote);
-    gitstorePath = await syncGitstore(gitstoreUrl, branchId);
-    encryptedFile = join(gitstorePath, `.env.${name}.encrypted`);
-    console.log(`Using gitstore on branch ${branchId}`);
-  }
-
-  if (!existsSync(encryptedFile)) {
-    console.error(`Error: ${encryptedFile} does not exist`);
-    process.exit(1);
-  }
-
-  console.log(`Decrypting ${encryptedFile} to ${localFile}...`);
-
-  try {
-    // Decrypt to temp file first
-    const tempFile = `.env.${name}.temp`;
-    copyFileSync(encryptedFile, tempFile);
-
-    // Decrypt in place
-    await execaCommand(`bunx dotenvx decrypt -f ${tempFile}`, {
-      shell: true,
-      stdio: 'inherit'
-    });
-
-    const decryptedContent = readFileSync(tempFile, "utf-8");
-
-    if (merge && existsSync(localFile)) {
-      // Merge with existing local file
-      const localContent = readFileSync(localFile, "utf-8");
-      const merged = mergeEnvFiles(localContent, decryptedContent);
-      writeFileSync(localFile, merged);
-      console.log(`✓ Decrypted and merged ${encryptedFile} -> ${localFile}`);
-    } else {
-      // Just write the decrypted content
-      writeFileSync(localFile, decryptedContent);
-      console.log(`✓ Decrypted ${encryptedFile} -> ${localFile}`);
-    }
-
-    // Clean up temp file
-    unlinkSync(tempFile);
-  } catch (error) {
-    console.error(`Failed to decrypt ${encryptedFile}:`, error);
-    process.exit(1);
-  }
-}
-
-async function syncEnvFile(name: string, gitstoreUrl?: string) {
-  const localFile = `.env.${name}.local`;
-  let encryptedFile = `.env.${name}.encrypted`;
-
-  let gitstorePath: string | null = null;
-  let branchId: string | null = null;
-
-  if (gitstoreUrl) {
-    // Using gitstore
-    const gitRemote = await getGitRemote();
-    branchId = calculateBranchId(gitRemote);
-    gitstorePath = await syncGitstore(gitstoreUrl, branchId);
-    encryptedFile = join(gitstorePath, `.env.${name}.encrypted`);
-    console.log(`Using gitstore on branch ${branchId}`);
-  }
-
-  const localExists = existsSync(localFile);
-  const encryptedExists = existsSync(encryptedFile);
-
-  if (!localExists && !encryptedExists) {
-    console.error(`Error: Neither ${localFile} nor ${encryptedFile} exists`);
+  if (!existsSync(projectPath)) {
+    console.log("No env files found in gitstore for this project");
     return;
   }
 
-  if (localExists && !encryptedExists) {
-    // Only local exists, encrypt it
-    console.log(`${encryptedFile} not found, creating from ${localFile}...`);
-    await encryptEnvFile(name, gitstoreUrl);
-  } else if (!localExists && encryptedExists) {
-    // Only encrypted exists, decrypt it
-    console.log(`${localFile} not found, creating from ${encryptedFile}...`);
-    await decryptEnvFile(name, false, gitstoreUrl);
-  } else {
-    // Both exist - sync them
-    const localStat = Bun.file(localFile);
-    const encryptedStat = Bun.file(encryptedFile);
+  // Find all .env* files in gitstore
+  const remoteFiles = await findEnvFiles(".env*", projectPath);
 
-    const localMtime = (await localStat.stat()).mtime;
-    const encryptedMtime = (await encryptedStat.stat()).mtime;
+  if (remoteFiles.length === 0) {
+    console.log("No .env* files found in gitstore");
+    return;
+  }
 
-    if (localMtime > encryptedMtime) {
-      console.log(`${localFile} is newer, encrypting...`);
-      await encryptEnvFile(name, gitstoreUrl);
-    } else if (encryptedMtime > localMtime) {
-      console.log(`${encryptedFile} is newer, decrypting and merging...`);
-      await decryptEnvFile(name, true, gitstoreUrl);
-    } else {
-      console.log(`${name}: Files are in sync`);
+  // Copy each file from gitstore to local
+  for (const file of remoteFiles) {
+    const sourcePath = join(projectPath, file);
+    const destPath = file;
+    copyFileSync(sourcePath, destPath);
+    console.log(`✓ Pulled ${file} from gitstore`);
+  }
+}
+
+// Sync .env* files bidirectionally
+async function syncWithGitstore(gitstoreUrl: string) {
+  console.log("Syncing .env* files with gitstore...");
+
+  // Sync gitstore
+  const gitstorePath = await syncGitstore(gitstoreUrl);
+  const projectPath = await getProjectPath(gitstorePath);
+
+  // Create project directory if it doesn't exist
+  if (!existsSync(projectPath)) {
+    mkdirSync(projectPath, { recursive: true });
+  }
+
+  // Find local and remote files
+  const localFiles = await findEnvFiles(".env*");
+  const remoteFiles = existsSync(projectPath)
+    ? await findEnvFiles(".env*", projectPath)
+    : [];
+
+  const allFiles = new Set([...localFiles, ...remoteFiles]);
+
+  if (allFiles.size === 0) {
+    console.log("No .env* files found");
+    return;
+  }
+
+  let hasChanges = false;
+
+  for (const file of allFiles) {
+    const localPath = file;
+    const remotePath = join(projectPath, file);
+
+    const localExists = existsSync(localPath);
+    const remoteExists = existsSync(remotePath);
+
+    if (!localExists && remoteExists) {
+      // Only in gitstore, pull it
+      copyFileSync(remotePath, localPath);
+      console.log(`← Pulled ${file} from gitstore`);
+    } else if (localExists && !remoteExists) {
+      // Only local, push it
+      copyFileSync(localPath, remotePath);
+      console.log(`→ Pushed ${file} to gitstore`);
+      hasChanges = true;
+    } else if (localExists && remoteExists) {
+      // Both exist, compare modification times
+      const localStat = Bun.file(localPath);
+      const remoteStat = Bun.file(remotePath);
+
+      const localMtime = (await localStat.stat()).mtime;
+      const remoteMtime = (await remoteStat.stat()).mtime;
+
+      if (localMtime > remoteMtime) {
+        copyFileSync(localPath, remotePath);
+        console.log(`→ ${file} (local is newer)`);
+        hasChanges = true;
+      } else if (remoteMtime > localMtime) {
+        copyFileSync(remotePath, localPath);
+        console.log(`← ${file} (gitstore is newer)`);
+      } else {
+        console.log(`✓ ${file} (in sync)`);
+      }
+    }
+  }
+
+  // Commit and push if there are changes
+  if (hasChanges) {
+    try {
+      await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
+      const gitRemote = await getGitRemote();
+      const { owner, repo } = parseGitRemote(gitRemote);
+      await execaCommand(`cd ${gitstorePath} && git commit -m "Sync ${owner}/${repo} env files"`, { shell: true });
+      await execaCommand(`cd ${gitstorePath} && git push origin HEAD`, {
+        shell: true,
+        stdio: 'inherit'
+      });
+      console.log("✓ Pushed changes to gitstore");
+    } catch (error) {
+      console.error("Failed to push to gitstore:", error);
     }
   }
 }
 
-async function syncAll(gitstoreUrl?: string) {
-  let gitstorePath: string | null = null;
-  let branchId: string | null = null;
-
-  if (gitstoreUrl) {
-    const gitRemote = await getGitRemote();
-    branchId = calculateBranchId(gitRemote);
-    gitstorePath = await syncGitstore(gitstoreUrl, branchId);
-  }
-
-  const localFiles = await findEnvFiles(".env.*.local");
-  let encryptedFiles: string[] = [];
-
-  if (gitstorePath) {
-    // Find encrypted files in gitstore
-    const glob = new Bun.Glob(".env.*.encrypted");
-    for await (const file of glob.scan(gitstorePath)) {
-      encryptedFiles.push(file);
+// Cleanup .denvx directory
+function cleanup() {
+  const denvxDir = "./.denvx";
+  if (existsSync(denvxDir)) {
+    try {
+      rmSync(denvxDir, { recursive: true, force: true });
+      console.log("✓ Cleaned up temporary .denvx directory");
+    } catch (error) {
+      // Silent fail - not critical
     }
-  } else {
-    // Find encrypted files in current directory
-    encryptedFiles = await findEnvFiles(".env.*.encrypted");
-  }
-
-  const names = new Set<string>();
-
-  for (const file of localFiles) {
-    names.add(getEnvName(file));
-  }
-
-  for (const file of encryptedFiles) {
-    const name = file.replace(/\.env\.(.+)\.encrypted$/, "$1");
-    names.add(name);
-  }
-
-  if (names.size === 0) {
-    console.log("No .env.*.local or .env.*.encrypted files found");
-    return;
-  }
-
-  for (const name of names) {
-    await syncEnvFile(name, gitstoreUrl);
   }
 }
 
 // Setup yargs CLI
 yargs(hideBin(process.argv))
   .scriptName("denvx")
-  .usage("$0 <command> [options]")
+  .usage("$0 [command] [options]")
   .option("gitstore", {
     alias: "g",
     type: "string",
-    description: "Git repository URL for storing encrypted files",
+    description: "Git repository URL for storing env files",
   })
   .command(
-    "sync [name]",
-    "Sync .env.[name].local <=> .env.[name].encrypted",
-    (yargs) => {
-      return yargs.positional("name", {
-        describe: "Environment name (e.g., prod, dev). If omitted, sync all files",
-        type: "string",
-      });
-    },
+    ["$0", "sync", "s"],
+    "Sync .env* files bidirectionally with gitstore (default)",
+    () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
-
-      if (argv.name) {
-        await syncEnvFile(argv.name as string, gitstore || undefined);
-      } else {
-        await syncAll(gitstore || undefined);
+      if (!gitstore) {
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        process.exit(1);
       }
+      await syncWithGitstore(gitstore);
+      cleanup();
     }
   )
   .command(
-    ["encrypt <name>", "enc <name>"],
-    "Encrypt .env.[name].local to .env.[name].encrypted",
-    (yargs) => {
-      return yargs.positional("name", {
-        describe: "Environment name (e.g., prod, dev)",
-        type: "string",
-        demandOption: true,
-      });
-    },
+    ["push", "p"],
+    "Push .env* files to gitstore",
+    () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
-      await encryptEnvFile(argv.name as string, gitstore || undefined);
+      if (!gitstore) {
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        process.exit(1);
+      }
+      await pushToGitstore(gitstore);
+      cleanup();
     }
   )
   .command(
-    ["decrypt <name>", "dec <name>"],
-    "Decrypt .env.[name].encrypted to .env.[name].local",
-    (yargs) => {
-      return yargs.positional("name", {
-        describe: "Environment name (e.g., prod, dev)",
-        type: "string",
-        demandOption: true,
-      });
-    },
+    ["pull"],
+    "Pull .env* files from gitstore",
+    () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
-      await decryptEnvFile(argv.name as string, false, gitstore || undefined);
+      if (!gitstore) {
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        process.exit(1);
+      }
+      await pullFromGitstore(gitstore);
+      cleanup();
     }
   )
-  .example("$0 sync", "Sync all .env.*.local files")
-  .example("$0 sync prod", "Sync .env.prod.local <=> .env.prod.encrypted")
-  .example("$0 encrypt dev", "Encrypt .env.dev.local")
-  .example("$0 decrypt dev", "Decrypt .env.dev.encrypted")
-  .example("$0 --gitstore=https://github.com/user/envs.git sync", "Sync using remote gitstore")
-  .demandCommand(1, "You need to specify a command")
+  .example("$0", "Sync .env* files (default command)")
+  .example("$0 push", "Push all .env* files to gitstore")
+  .example("$0 pull", "Pull all .env* files from gitstore")
+  .example("$0 --gitstore=https://github.com/user/secrets.git", "Sync with specific gitstore")
   .help()
   .alias("h", "help")
   .version()
