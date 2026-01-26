@@ -51,9 +51,19 @@ function getGitstoreConfig(cliGitstore?: string): string | null {
     return process.env.DENVX_STORE;
   }
 
-  // Priority 3: .env.local file
+  // Priority 3: Project .env.local file
   if (existsSync(".env.local")) {
     const content = readFileSync(".env.local", "utf-8");
+    const match = content.match(/^DENVX_STORE=(.+)$/m);
+    if (match && match[1]) {
+      return match[1].replace(/^["']|["']$/g, "");
+    }
+  }
+
+  // Priority 4: Global ~/.envx/.env.local file (fallback)
+  const globalConfigPath = join(process.env.HOME || "/root", ".envx", ".env.local");
+  if (existsSync(globalConfigPath)) {
+    const content = readFileSync(globalConfigPath, "utf-8");
     const match = content.match(/^DENVX_STORE=(.+)$/m);
     if (match && match[1]) {
       return match[1].replace(/^["']|["']$/g, "");
