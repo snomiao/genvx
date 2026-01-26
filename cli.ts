@@ -94,22 +94,19 @@ async function syncGitstore(gitstoreUrl: string): Promise<string> {
   const gitstorePath = "./.denvx/gitstore";
 
   if (!existsSync(gitstorePath)) {
-    console.log(`Cloning gitstore...`);
     try {
-      await execaCommand(`git clone ${gitstoreUrl} ${gitstorePath}`, {
-        shell: true,
-        stdio: 'inherit'
+      await execaCommand(`git clone -q ${gitstoreUrl} ${gitstorePath}`, {
+        shell: true
       });
     } catch (error) {
-      console.log(`Repository doesn't exist yet, initializing...`);
       // Initialize an empty repo
       mkdirSync(gitstorePath, { recursive: true });
-      await execaCommand(`cd ${gitstorePath} && git init`, { shell: true });
+      await execaCommand(`cd ${gitstorePath} && git init -q`, { shell: true });
       await execaCommand(`cd ${gitstorePath} && git remote add origin ${gitstoreUrl}`, { shell: true });
       // Create initial commit
-      await execaCommand(`cd ${gitstorePath} && git commit --allow-empty -m "Initial commit"`, { shell: true });
+      await execaCommand(`cd ${gitstorePath} && git commit --allow-empty -m "Initial commit" -q`, { shell: true });
       try {
-        await execaCommand(`cd ${gitstorePath} && git push -u origin HEAD`, { shell: true, stdio: 'inherit' });
+        await execaCommand(`cd ${gitstorePath} && git push -u origin HEAD -q`, { shell: true });
       } catch {
         // Remote might not exist yet, that's ok
       }
@@ -150,7 +147,6 @@ async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<
 
 // Push .env* files to gitstore
 async function pushToGitstore(gitstoreUrl: string) {
-  console.log("Pushing .env* files to gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -165,7 +161,6 @@ async function pushToGitstore(gitstoreUrl: string) {
   const localFiles = await findEnvFiles(".env*");
 
   if (localFiles.length === 0) {
-    console.log("No .env* files found to push");
     return;
   }
 
@@ -173,7 +168,6 @@ async function pushToGitstore(gitstoreUrl: string) {
   for (const file of localFiles) {
     const destPath = join(projectPath, file);
     copyFileSync(file, destPath);
-    console.log(`✓ Copied ${file} to gitstore`);
   }
 
   // Commit and push
@@ -183,7 +177,6 @@ async function pushToGitstore(gitstoreUrl: string) {
     // Check if there are changes to commit
     try {
       await execaCommand(`cd ${gitstorePath} && git diff-index --quiet HEAD`, { shell: true });
-      console.log("No changes to push");
       return;
     } catch {
       // There are changes, proceed with commit
@@ -192,11 +185,9 @@ async function pushToGitstore(gitstoreUrl: string) {
     const gitRemote = await getGitRemote();
     const { owner, repo } = parseGitRemote(gitRemote);
     await execaCommand(`cd ${gitstorePath} && git commit -m "Update ${owner}/${repo} env files"`, { shell: true });
-    await execaCommand(`cd ${gitstorePath} && git push origin HEAD`, {
-      shell: true,
-      stdio: 'inherit'
+    await execaCommand(`cd ${gitstorePath} && git push origin HEAD -q`, {
+      shell: true
     });
-    console.log("✓ Pushed to gitstore");
   } catch (error) {
     console.error("Failed to push to gitstore:", error);
   }
@@ -204,14 +195,12 @@ async function pushToGitstore(gitstoreUrl: string) {
 
 // Pull .env* files from gitstore
 async function pullFromGitstore(gitstoreUrl: string) {
-  console.log("Pulling .env* files from gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
   const projectPath = await getProjectPath(gitstorePath);
 
   if (!existsSync(projectPath)) {
-    console.log("No env files found in gitstore for this project");
     return;
   }
 
@@ -219,7 +208,6 @@ async function pullFromGitstore(gitstoreUrl: string) {
   const remoteFiles = await findEnvFiles(".env*", projectPath);
 
   if (remoteFiles.length === 0) {
-    console.log("No .env* files found in gitstore");
     return;
   }
 
@@ -228,13 +216,11 @@ async function pullFromGitstore(gitstoreUrl: string) {
     const sourcePath = join(projectPath, file);
     const destPath = file;
     copyFileSync(sourcePath, destPath);
-    console.log(`✓ Pulled ${file} from gitstore`);
   }
 }
 
 // Sync .env* files bidirectionally
 async function syncWithGitstore(gitstoreUrl: string) {
-  console.log("Syncing .env* files with gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -254,7 +240,6 @@ async function syncWithGitstore(gitstoreUrl: string) {
   const allFiles = new Set([...localFiles, ...remoteFiles]);
 
   if (allFiles.size === 0) {
-    console.log("No .env* files found");
     return;
   }
 
@@ -270,22 +255,24 @@ async function syncWithGitstore(gitstoreUrl: string) {
     if (!localExists && remoteExists) {
       // Only in gitstore, pull it
       copyFileSync(remotePath, localPath);
-      console.log(`← Pulled ${file} from gitstore`);
     } else if (localExists && !remoteExists) {
       // Only local, push it
       copyFileSync(localPath, remotePath);
-      console.log(`→ Pushed ${file} to gitstore`);
       hasChanges = true;
     } else if (localExists && remoteExists) {
-      // Both exist, always accept gitstore version (theirs)
-      const localContent = readFileSync(localPath, "utf-8");
-      const remoteContent = readFileSync(remotePath, "utf-8");
+      // Both exist, compare modification times
+      const localStat = Bun.file(localPath);
+      const remoteStat = Bun.file(remotePath);
 
-      if (localContent !== remoteContent) {
+      const localMtime = (await localStat.stat()).mtime;
+      const remoteMtime = (await remoteStat.stat()).mtime;
+
+      if (localMtime > remoteMtime) {
+        copyFileSync(localPath, remotePath);
+        hasChanges = true;
+      } else if (remoteMtime > localMtime) {
         copyFileSync(remotePath, localPath);
-        console.log(`← ${file} (accepted gitstore version)`);
       } else {
-        console.log(`✓ ${file} (in sync)`);
       }
     }
   }
@@ -301,7 +288,6 @@ async function syncWithGitstore(gitstoreUrl: string) {
         shell: true,
         stdio: 'inherit'
       });
-      console.log("✓ Pushed changes to gitstore");
     } catch (error) {
       console.error("Failed to push to gitstore:", error);
     }
@@ -314,7 +300,6 @@ function cleanup() {
   if (existsSync(denvxDir)) {
     try {
       rmSync(denvxDir, { recursive: true, force: true });
-      console.log("✓ Cleaned up temporary .denvx directory");
     } catch (error) {
       // Silent fail - not critical
     }
