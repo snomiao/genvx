@@ -405,6 +405,14 @@ async function cleanup() {
   }
 }
 
+// Handle "version" command before yargs processes it
+const firstArg = process.argv[2];
+if (firstArg === 'version') {
+  const pkg = await Bun.file(join(import.meta.dir, 'package.json')).json();
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 // Setup yargs CLI
 yargs(hideBin(process.argv))
   .scriptName("genvx")
