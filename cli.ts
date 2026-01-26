@@ -98,6 +98,21 @@ function getGitstoreConfig(cliGitstore?: string): string | null {
   return null;
 }
 
+// Redact credentials from URL for display
+function redactUrlCredentials(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    if (urlObj.username || urlObj.password) {
+      // Replace credentials with asterisks
+      return url.replace(/\/\/[^@]+@/, '//***@');
+    }
+    return url;
+  } catch {
+    // If URL parsing fails, try regex fallback
+    return url.replace(/\/\/[^@]+@/, '//***@');
+  }
+}
+
 // Normalize git remote URL (git@github.com:user/repo.git -> https://github.com/user/repo.git)
 function normalizeGitRemote(remote: string): string {
   // Convert SSH format to HTTPS
@@ -149,7 +164,7 @@ async function syncGitstore(gitstoreUrl: string, branchId: string): Promise<stri
   const gitstorePath = "./.denvx/gitstore";
 
   if (!existsSync(gitstorePath)) {
-    console.log(`Cloning gitstore from ${gitstoreUrl}...`);
+    console.log(`Cloning gitstore from ${redactUrlCredentials(gitstoreUrl)}...`);
     try {
       await execaCommand(`git clone ${gitstoreUrl} ${gitstorePath}`, {
         shell: true,
