@@ -405,14 +405,6 @@ async function cleanup() {
   }
 }
 
-// Handle "version" command before yargs processes it
-const firstArg = process.argv[2];
-if (firstArg === 'version') {
-  const pkg = await Bun.file(join(import.meta.dir, 'package.json')).json();
-  console.log(pkg.version);
-  process.exit(0);
-}
-
 // Setup yargs CLI
 yargs(hideBin(process.argv))
   .scriptName("genvx")
@@ -422,11 +414,34 @@ yargs(hideBin(process.argv))
     type: "string",
     description: "Git repository URL for storing env files",
   })
+  .fail((msg, err, yargs) => {
+    // Check if user typed "version" as a command
+    const firstArg = process.argv[2];
+    if (firstArg === 'version') {
+      console.error('Unknown command: version');
+      console.error('\nDid you mean --version?\n');
+      console.error(yargs.help());
+      process.exit(1);
+    }
+    if (err) throw err;
+    if (msg) {
+      console.error(msg);
+      process.exit(1);
+    }
+  })
   .command(
     ["$0", "sync", "s"],
     "Sync .env* files bidirectionally with gitstore (default)",
     () => {},
     async (argv) => {
+      // Reject if user typed "version" as a command
+      const firstArg = process.argv[2];
+      if (firstArg === 'version') {
+        console.error('Unknown command: version');
+        console.error('\nDid you mean --version?\n');
+        process.exit(1);
+      }
+
       const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
         console.error("Error: GENVX_STORE not configured");
@@ -536,4 +551,6 @@ yargs(hideBin(process.argv))
   .alias("h", "help")
   .version()
   .alias("v", "version")
+  .strictCommands()
+  .demandCommand(0, 0)
   .parse();
