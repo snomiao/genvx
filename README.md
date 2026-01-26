@@ -1,10 +1,10 @@
 # denvx
 
-A simple CLI tool to sync `.env.*.local` files across projects using a private git repository.
+A simple CLI tool to sync `.env*` files across projects using a private git repository.
 
 ## Features
 
-- 🔄 **Bidirectional sync** - Push, pull, or sync `.env.*.local` files
+- 🔄 **Bidirectional sync** - Push, pull, or sync `.env*` files
 - ☁️ **Private gitstore** - Store env files in a private git repository
 - 📁 **Organized storage** - Files stored by `{host}/{owner}/{repo}` structure
 - 🚀 **Simple** - No encryption, just git + file sync
@@ -43,7 +43,7 @@ Set your gitstore (private repo) URL via one of these methods (priority order):
 ### Push env files to gitstore
 
 ```bash
-# Push all .env.*.local files to gitstore
+# Push all .env* files to gitstore
 denvx push
 
 # Or use short alias
@@ -53,7 +53,7 @@ denvx p
 ### Pull env files from gitstore
 
 ```bash
-# Pull all .env.*.local files from gitstore
+# Pull all .env* files from gitstore
 denvx pull
 ```
 
@@ -98,7 +98,7 @@ gitstore-repo/
 ### Workflow
 
 1. **Clone/Pull**: denvx clones your gitstore to `./.denvx/gitstore` (temporary)
-2. **Sync Files**: Copies `.env.*.local` files to/from `{host}/{owner}/{repo}/` path
+2. **Sync Files**: Copies `.env*` files to/from `{host}/{owner}/{repo}/` path
 3. **Commit/Push**: Commits and pushes changes to gitstore
 4. **Cleanup**: Removes `./.denvx` directory
 
@@ -124,7 +124,7 @@ denvx --gitstore=git@github.com:company/envs.git sync
 ## Security Notes
 
 - ⚠️ **Use a private repository** for your gitstore
-- ⚠️ Never commit `.env.*.local` files to your project repos
+- ⚠️ Never commit `.env*` files to your project repos
 - ✅ Your env files are stored in `.denvx/gitstore/{host}/{owner}/{repo}/`
 - 🔒 The gitstore should only be accessible to you/your team
 
@@ -153,10 +153,10 @@ envs-repo/
 ## Commands
 
 ### `denvx push` (alias: `p`)
-Push all local `.env.*.local` files to gitstore
+Push all local `.env*` files to gitstore
 
 ### `denvx pull`
-Pull all `.env.*.local` files from gitstore to local
+Pull all `.env*` files from gitstore to local
 
 ### `denvx sync` (alias: `s`)
 Sync files bidirectionally based on modification times
