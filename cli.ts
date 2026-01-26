@@ -329,14 +329,29 @@ function cleanup() {
 }
 
 // Setup yargs CLI
-yargs(hideBin(process.argv))
+const argv = yargs(hideBin(process.argv))
   .scriptName("denvx")
-  .usage("$0 <command> [options]")
+  .usage("$0 [command] [options]")
   .option("gitstore", {
     alias: "g",
     type: "string",
     description: "Git repository URL for storing env files",
   })
+  .command(
+    ["sync", "s"],
+    "Sync .env* files bidirectionally with gitstore (default)",
+    () => {},
+    async (argv) => {
+      const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
+      if (!gitstore) {
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+        process.exit(1);
+      }
+      await syncWithGitstore(gitstore);
+      cleanup();
+    }
+  )
   .command(
     ["push", "p"],
     "Push .env* files to gitstore",
@@ -367,28 +382,26 @@ yargs(hideBin(process.argv))
       cleanup();
     }
   )
-  .command(
-    ["sync", "s"],
-    "Sync .env* files bidirectionally with gitstore",
-    () => {},
-    async (argv) => {
-      const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
-      if (!gitstore) {
-        console.error("Error: DENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
-        process.exit(1);
-      }
-      await syncWithGitstore(gitstore);
-      cleanup();
-    }
-  )
+  .example("$0", "Sync .env* files (default command)")
   .example("$0 push", "Push all .env* files to gitstore")
   .example("$0 pull", "Pull all .env* files from gitstore")
-  .example("$0 sync", "Sync .env* files bidirectionally")
-  .example("$0 --gitstore=https://github.com/user/secrets.git sync", "Sync with specific gitstore")
-  .demandCommand(1, "You need to specify a command")
+  .example("$0 --gitstore=https://github.com/user/secrets.git", "Sync with specific gitstore")
   .help()
   .alias("h", "help")
   .version()
   .alias("v", "version")
-  .parse();
+  .parseAsync();
+
+// If no command specified, run sync by default
+argv.then(async (args) => {
+  if (args._.length === 0 && !args.help && !args.version) {
+    const gitstore = getGitstoreConfig(args.gitstore as string | undefined);
+    if (!gitstore) {
+      console.error("Error: DENVX_STORE not configured");
+      console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
+      process.exit(1);
+    }
+    await syncWithGitstore(gitstore);
+    cleanup();
+  }
+});
