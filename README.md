@@ -37,15 +37,15 @@ Set your gitstore (private repo) URL via one of these methods (priority order):
 1. **CLI flag**: `--gitstore=<url>` (highest priority)
 2. **Environment variable**: `export DENVX_STORE=<url>`
 3. **Project `.env.local`**: `DENVX_STORE=<url>` (in current directory)
-4. **Global config**: `~/.envx/.env.local` with `DENVX_STORE=<url>` (lowest priority)
+4. **Global config**: `~/.denvx/.env.local` with `DENVX_STORE=<url>` (lowest priority)
 
 ### Global Configuration
 
 For convenience, you can set a default gitstore URL globally:
 
 ```bash
-mkdir -p ~/.envx
-echo "DENVX_STORE=https://github.com/youruser/envs.git" > ~/.envx/.env.local
+mkdir -p ~/.denvx
+echo "DENVX_STORE=https://github.com/youruser/envs.git" > ~/.denvx/.env.local
 ```
 
 This will be used as a fallback for all projects that don't have their own configuration.

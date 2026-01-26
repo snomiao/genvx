@@ -60,8 +60,8 @@ function getGitstoreConfig(cliGitstore?: string): string | null {
     }
   }
 
-  // Priority 4: Global ~/.envx/.env.local file (fallback)
-  const globalConfigPath = join(process.env.HOME || "/root", ".envx", ".env.local");
+  // Priority 4: Global ~/.denvx/.env.local file (fallback)
+  const globalConfigPath = join(process.env.HOME || "/root", ".denvx", ".env.local");
   if (existsSync(globalConfigPath)) {
     const content = readFileSync(globalConfigPath, "utf-8");
     const match = content.match(/^DENVX_STORE=(.+)$/m);
