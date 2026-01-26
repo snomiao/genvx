@@ -35,8 +35,8 @@ denvx --help
 Set your gitstore (private repo) URL via one of these methods (priority order):
 
 1. **CLI flag**: `--gitstore=<url>` (highest priority)
-2. **Environment variable**: `export DENVX_GITSTORE=<url>`
-3. **In `.env.local`**: `DENVX_GITSTORE=<url>` (lowest priority)
+2. **Environment variable**: `export DENVX_STORE=<url>`
+3. **In `.env.local`**: `DENVX_STORE=<url>` (lowest priority)
 
 ## Usage
 
@@ -106,7 +106,7 @@ gitstore-repo/
 
 ```bash
 # Configure gitstore via environment variable
-export DENVX_GITSTORE=git@github.com:yourusername/my-env-store.git
+export DENVX_STORE=git@github.com:yourusername/my-env-store.git
 
 # Push your env files
 denvx push

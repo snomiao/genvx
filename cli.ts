@@ -47,14 +47,14 @@ function getGitstoreConfig(cliGitstore?: string): string | null {
   }
 
   // Priority 2: Environment variable
-  if (process.env.DENVX_GITSTORE) {
-    return process.env.DENVX_GITSTORE;
+  if (process.env.DENVX_STORE) {
+    return process.env.DENVX_STORE;
   }
 
   // Priority 3: .env.local file
   if (existsSync(".env.local")) {
     const content = readFileSync(".env.local", "utf-8");
-    const match = content.match(/^DENVX_GITSTORE=(.+)$/m);
+    const match = content.match(/^DENVX_STORE=(.+)$/m);
     if (match && match[1]) {
       return match[1].replace(/^["']|["']$/g, "");
     }
@@ -334,8 +334,8 @@ yargs(hideBin(process.argv))
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_GITSTORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_GITSTORE env var, or in .env.local");
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
       await pushToGitstore(gitstore);
@@ -349,8 +349,8 @@ yargs(hideBin(process.argv))
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_GITSTORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_GITSTORE env var, or in .env.local");
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
       await pullFromGitstore(gitstore);
@@ -364,8 +364,8 @@ yargs(hideBin(process.argv))
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
       if (!gitstore) {
-        console.error("Error: DENVX_GITSTORE not configured");
-        console.error("Set it via --gitstore flag, DENVX_GITSTORE env var, or in .env.local");
+        console.error("Error: DENVX_STORE not configured");
+        console.error("Set it via --gitstore flag, DENVX_STORE env var, or in .env.local");
         process.exit(1);
       }
       await syncWithGitstore(gitstore);
