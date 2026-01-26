@@ -93,12 +93,12 @@ async function getGitstoreConfig(cliGitstore?: string): Promise<string | null> {
 }
 
 // Setup .genvx directory
-async function setupDenvxDir() {
-  const denvxDir = "./node_modules/.genvx";
-  const gitignorePath = join(denvxDir, ".gitignore");
+async function setupGenvxDir() {
+  const genvxDir = "./node_modules/.genvx";
+  const gitignorePath = join(genvxDir, ".gitignore");
 
-  if (!existsSync(denvxDir)) {
-    await mkdir(denvxDir, { recursive: true });
+  if (!existsSync(genvxDir)) {
+    await mkdir(genvxDir, { recursive: true });
   }
 
   if (!existsSync(gitignorePath)) {
@@ -108,7 +108,7 @@ async function setupDenvxDir() {
 
 // Clone or pull gitstore repository
 async function syncGitstore(gitstoreUrl: string): Promise<string> {
-  await setupDenvxDir();
+  await setupGenvxDir();
 
   const gitstorePath = "./node_modules/.genvx/gitstore";
 
@@ -395,10 +395,10 @@ async function syncWithGitstore(gitstoreUrl: string) {
 
 // Cleanup .genvx directory
 async function cleanup() {
-  const denvxDir = "./node_modules/.genvx";
-  if (existsSync(denvxDir)) {
+  const genvxDir = "./node_modules/.genvx";
+  if (existsSync(genvxDir)) {
     try {
-      await rm(denvxDir, { recursive: true, force: true });
+      await rm(genvxDir, { recursive: true, force: true });
     } catch (error) {
       // Silent fail - not critical
     }
@@ -407,7 +407,7 @@ async function cleanup() {
 
 // Setup yargs CLI
 yargs(hideBin(process.argv))
-  .scriptName("denvx")
+  .scriptName("genvx")
   .usage("$0 [command] [options]")
   .option("gitstore", {
     alias: "g",

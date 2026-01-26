@@ -1,4 +1,4 @@
-# denvx
+# genvx
 
 A simple CLI tool to sync `.env*` files across projects using a private git repository.
 
@@ -26,8 +26,8 @@ bun install
 # Link globally for system-wide access
 bun link
 
-# Now you can use denvx anywhere
-denvx --help
+# Now you can use genvx anywhere
+genvx --help
 ```
 
 ## Configuration
@@ -56,27 +56,27 @@ This will be used as a fallback for all projects that don't have their own confi
 
 ```bash
 # Push all .env* files to gitstore
-denvx push
+genvx push
 
 # Or use short alias
-denvx p
+genvx p
 ```
 
 ### Pull env files from gitstore
 
 ```bash
 # Pull all .env* files from gitstore
-denvx pull
+genvx pull
 ```
 
 ### Sync bidirectionally
 
 ```bash
 # Sync based on modification times
-denvx sync
+genvx sync
 
 # Or use short alias
-denvx s
+genvx s
 ```
 
 The sync command will:
@@ -109,7 +109,7 @@ gitstore-repo/
 
 ### Workflow
 
-1. **Clone/Pull**: denvx clones your gitstore to `./node_modules/.genvx/gitstore` (temporary)
+1. **Clone/Pull**: genvx clones your gitstore to `./node_modules/.genvx/gitstore` (temporary)
 2. **Sync Files**: Copies `.env*` files to/from `{host}/{owner}/{repo}/` path
 3. **Commit/Push**: Commits and pushes changes to gitstore
 4. **Cleanup**: Removes `./node_modules/.genvx` directory
@@ -121,16 +121,16 @@ gitstore-repo/
 export GENVX_STORE=git@github.com:yourusername/my-env-store.git
 
 # Push your env files
-denvx push
+genvx push
 
 # On another machine, pull them
-denvx pull
+genvx pull
 
 # Or just sync (automatically push/pull based on timestamps)
-denvx sync
+genvx sync
 
 # Use CLI flag to override
-denvx --gitstore=git@github.com:company/envs.git sync
+genvx --gitstore=git@github.com:company/envs.git sync
 ```
 
 ## Security Notes
@@ -164,13 +164,13 @@ envs-repo/
 
 ## Commands
 
-### `denvx push` (alias: `p`)
+### `genvx push` (alias: `p`)
 Push all local `.env*` files to gitstore
 
-### `denvx pull`
+### `genvx pull`
 Pull all `.env*` files from gitstore to local
 
-### `denvx sync` (alias: `s`)
+### `genvx sync` (alias: `s`)
 Sync files bidirectionally based on modification times
 
 ## Development
