@@ -123,21 +123,24 @@ async function getProjectPath(gitstorePath: string): Promise<string> {
   return join(gitstorePath, host, owner, repo);
 }
 
-// Find all .env.*.local files
+// Find all .env* files
 async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
-  const glob = new Bun.Glob(pattern);
-  const files: string[] = [];
+  const { readdirSync } = await import("fs");
 
-  for await (const file of glob.scan(searchPath)) {
-    files.push(file);
+  // Convert glob pattern to regex
+  const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+
+  try {
+    const files = readdirSync(searchPath).filter((f) => regex.test(f));
+    return files;
+  } catch (error) {
+    return [];
   }
-
-  return files;
 }
 
-// Push .env*.local files to gitstore
+// Push .env* files to gitstore
 async function pushToGitstore(gitstoreUrl: string) {
-  console.log("Pushing .env*.local files to gitstore...");
+  console.log("Pushing .env* files to gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -148,11 +151,11 @@ async function pushToGitstore(gitstoreUrl: string) {
     mkdirSync(projectPath, { recursive: true });
   }
 
-  // Find all local .env.*.local files
-  const localFiles = await findEnvFiles(".env.*.local");
+  // Find all local .env* files
+  const localFiles = await findEnvFiles(".env*");
 
   if (localFiles.length === 0) {
-    console.log("No .env.*.local files found to push");
+    console.log("No .env* files found to push");
     return;
   }
 
@@ -189,9 +192,9 @@ async function pushToGitstore(gitstoreUrl: string) {
   }
 }
 
-// Pull .env*.local files from gitstore
+// Pull .env* files from gitstore
 async function pullFromGitstore(gitstoreUrl: string) {
-  console.log("Pulling .env*.local files from gitstore...");
+  console.log("Pulling .env* files from gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -202,11 +205,11 @@ async function pullFromGitstore(gitstoreUrl: string) {
     return;
   }
 
-  // Find all .env.*.local files in gitstore
-  const remoteFiles = await findEnvFiles(".env.*.local", projectPath);
+  // Find all .env* files in gitstore
+  const remoteFiles = await findEnvFiles(".env*", projectPath);
 
   if (remoteFiles.length === 0) {
-    console.log("No .env.*.local files found in gitstore");
+    console.log("No .env* files found in gitstore");
     return;
   }
 
@@ -219,9 +222,9 @@ async function pullFromGitstore(gitstoreUrl: string) {
   }
 }
 
-// Sync .env*.local files bidirectionally
+// Sync .env* files bidirectionally
 async function syncWithGitstore(gitstoreUrl: string) {
-  console.log("Syncing .env*.local files with gitstore...");
+  console.log("Syncing .env* files with gitstore...");
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -233,15 +236,15 @@ async function syncWithGitstore(gitstoreUrl: string) {
   }
 
   // Find local and remote files
-  const localFiles = await findEnvFiles(".env.*.local");
+  const localFiles = await findEnvFiles(".env*");
   const remoteFiles = existsSync(projectPath)
-    ? await findEnvFiles(".env.*.local", projectPath)
+    ? await findEnvFiles(".env*", projectPath)
     : [];
 
   const allFiles = new Set([...localFiles, ...remoteFiles]);
 
   if (allFiles.size === 0) {
-    console.log("No .env.*.local files found");
+    console.log("No .env* files found");
     return;
   }
 
@@ -326,7 +329,7 @@ yargs(hideBin(process.argv))
   })
   .command(
     ["push", "p"],
-    "Push .env.*.local files to gitstore",
+    "Push .env* files to gitstore",
     () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
@@ -341,7 +344,7 @@ yargs(hideBin(process.argv))
   )
   .command(
     ["pull"],
-    "Pull .env.*.local files from gitstore",
+    "Pull .env* files from gitstore",
     () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
@@ -356,7 +359,7 @@ yargs(hideBin(process.argv))
   )
   .command(
     ["sync", "s"],
-    "Sync .env.*.local files bidirectionally with gitstore",
+    "Sync .env* files bidirectionally with gitstore",
     () => {},
     async (argv) => {
       const gitstore = getGitstoreConfig(argv.gitstore as string | undefined);
@@ -369,9 +372,9 @@ yargs(hideBin(process.argv))
       cleanup();
     }
   )
-  .example("$0 push", "Push all .env.*.local files to gitstore")
-  .example("$0 pull", "Pull all .env.*.local files from gitstore")
-  .example("$0 sync", "Sync .env.*.local files bidirectionally")
+  .example("$0 push", "Push all .env* files to gitstore")
+  .example("$0 pull", "Pull all .env* files from gitstore")
+  .example("$0 sync", "Sync .env* files bidirectionally")
   .example("$0 --gitstore=https://github.com/user/secrets.git sync", "Sync with specific gitstore")
   .demandCommand(1, "You need to specify a command")
   .help()
