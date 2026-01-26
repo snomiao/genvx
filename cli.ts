@@ -284,9 +284,8 @@ async function syncWithGitstore(gitstoreUrl: string) {
       const gitRemote = await getGitRemote();
       const { owner, repo } = parseGitRemote(gitRemote);
       await execaCommand(`cd ${gitstorePath} && git commit -m "Sync ${owner}/${repo} env files"`, { shell: true });
-      await execaCommand(`cd ${gitstorePath} && git push origin HEAD`, {
-        shell: true,
-        stdio: 'inherit'
+      await execaCommand(`cd ${gitstorePath} && git push origin HEAD -q`, {
+        shell: true
       });
     } catch (error) {
       console.error("Failed to push to gitstore:", error);
