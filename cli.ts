@@ -277,20 +277,13 @@ async function syncWithGitstore(gitstoreUrl: string) {
       console.log(`→ Pushed ${file} to gitstore`);
       hasChanges = true;
     } else if (localExists && remoteExists) {
-      // Both exist, compare modification times
-      const localStat = Bun.file(localPath);
-      const remoteStat = Bun.file(remotePath);
+      // Both exist, always accept gitstore version (theirs)
+      const localContent = readFileSync(localPath, "utf-8");
+      const remoteContent = readFileSync(remotePath, "utf-8");
 
-      const localMtime = (await localStat.stat()).mtime;
-      const remoteMtime = (await remoteStat.stat()).mtime;
-
-      if (localMtime > remoteMtime) {
-        copyFileSync(localPath, remotePath);
-        console.log(`→ ${file} (local is newer)`);
-        hasChanges = true;
-      } else if (remoteMtime > localMtime) {
+      if (localContent !== remoteContent) {
         copyFileSync(remotePath, localPath);
-        console.log(`← ${file} (gitstore is newer)`);
+        console.log(`← ${file} (accepted gitstore version)`);
       } else {
         console.log(`✓ ${file} (in sync)`);
       }
