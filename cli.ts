@@ -2,7 +2,7 @@
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, unlinkSync } from "fs";
 import { join } from "path";
 
 // Parse git remote URL to extract host, owner, and repo
@@ -256,7 +256,7 @@ async function pullFromGitstore(gitstoreUrl: string) {
   }
 }
 
-// Sync .env* files bidirectionally
+// Sync .env* files bidirectionally using git diff
 async function syncWithGitstore(gitstoreUrl: string) {
 
   // Sync gitstore
@@ -268,86 +268,96 @@ async function syncWithGitstore(gitstoreUrl: string) {
     mkdirSync(projectPath, { recursive: true });
   }
 
-  // Find local and remote files
-  const localFiles = await findEnvFiles(".env*");
+  // First, pull files from gitstore that don't exist locally
   const remoteFiles = existsSync(projectPath)
     ? await findEnvFiles(".env*", projectPath)
     : [];
 
-  const allFiles = new Set([...localFiles, ...remoteFiles]);
-
-  if (allFiles.size === 0) {
-    return;
-  }
-
-  let hasChanges = false;
-
-  for (const file of allFiles) {
+  for (const file of remoteFiles) {
     const localPath = file;
-    const remotePath = join(projectPath, file);
-
-    const localExists = existsSync(localPath);
-    const remoteExists = existsSync(remotePath);
-
-    if (!localExists && remoteExists) {
-      // Only in gitstore, pull it
+    if (!existsSync(localPath)) {
       const localDir = join(localPath, "..");
       if (!existsSync(localDir)) {
         mkdirSync(localDir, { recursive: true });
       }
-      copyFileSync(remotePath, localPath);
+      copyFileSync(join(projectPath, file), localPath);
       console.log(`← ${file}`);
-    } else if (localExists && !remoteExists) {
-      // Only local, push it
-      const remoteDir = join(remotePath, "..");
-      if (!existsSync(remoteDir)) {
-        mkdirSync(remoteDir, { recursive: true });
-      }
-      copyFileSync(localPath, remotePath);
-      console.log(`→ ${file}`);
-      hasChanges = true;
-    } else if (localExists && remoteExists) {
-      // Both exist, compare modification times
-      const localStat = Bun.file(localPath);
-      const remoteStat = Bun.file(remotePath);
-
-      const localMtime = (await localStat.stat()).mtime;
-      const remoteMtime = (await remoteStat.stat()).mtime;
-
-      if (localMtime > remoteMtime) {
-        const remoteDir = join(remotePath, "..");
-        if (!existsSync(remoteDir)) {
-          mkdirSync(remoteDir, { recursive: true });
-        }
-        copyFileSync(localPath, remotePath);
-        console.log(`→ ${file} (newer)`);
-        hasChanges = true;
-      } else if (remoteMtime > localMtime) {
-        const localDir = join(localPath, "..");
-        if (!existsSync(localDir)) {
-          mkdirSync(localDir, { recursive: true });
-        }
-        copyFileSync(remotePath, localPath);
-        console.log(`← ${file} (newer)`);
-      } else {
-        console.log(`= ${file}`);
-      }
     }
   }
 
-  // Commit and push if there are changes
-  if (hasChanges) {
-    try {
-      await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
-      const gitRemote = await getGitRemote();
-      const { owner, repo } = parseGitRemote(gitRemote);
-      await execaCommand(`cd ${gitstorePath} && git commit -m "Sync ${owner}/${repo} env files"`, { shell: true });
-      await execaCommand(`cd ${gitstorePath} && git push origin HEAD -q`, {
-        shell: true
-      });
-    } catch (error) {
-      console.error("Failed to push to gitstore:", error);
+  // Clean project directory in gitstore (remove all .env* files)
+  if (existsSync(projectPath)) {
+    const filesToRemove = await findEnvFiles(".env*", projectPath);
+    for (const file of filesToRemove) {
+      unlinkSync(join(projectPath, file));
     }
+  }
+
+  // Copy all local .env* files to gitstore
+  const localFiles = await findEnvFiles(".env*");
+
+  if (localFiles.length === 0) {
+    return;
+  }
+
+  for (const file of localFiles) {
+    const destPath = join(projectPath, file);
+    const destDir = join(destPath, "..");
+    if (!existsSync(destDir)) {
+      mkdirSync(destDir, { recursive: true });
+    }
+    copyFileSync(file, destPath);
+  }
+
+  // Use git status to detect changes (with rename detection)
+  try {
+    const result = await execaCommand(`cd ${gitstorePath} && git status --short -M`, { shell: true });
+    const statusLines = result.stdout.trim().split('\n').filter(line => line);
+
+    if (statusLines.length === 0) {
+      return;
+    }
+
+    // Parse and display git status
+    for (const line of statusLines) {
+      const status = line.substring(0, 2).trim();
+      const filePath = line.substring(3);
+
+      // Extract just the filename relative to projectPath
+      const relativePath = filePath.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '');
+
+      if (status === 'A' || status === '??') {
+        console.log(`+ ${relativePath}`);
+      } else if (status === 'M') {
+        console.log(`M ${relativePath}`);
+      } else if (status === 'D') {
+        console.log(`- ${relativePath}`);
+      } else if (status.startsWith('R')) {
+        const [oldFile, newFile] = filePath.split(' -> ');
+        const oldRelative = oldFile?.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '') || '';
+        const newRelative = newFile?.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '') || '';
+        console.log(`R ${oldRelative} → ${newRelative}`);
+      }
+    }
+
+    // Commit and push
+    await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
+    const gitRemote = await getGitRemote();
+    const { owner, repo } = parseGitRemote(gitRemote);
+    await execaCommand(`cd ${gitstorePath} && git commit -m "Sync ${owner}/${repo} env files"`, { shell: true });
+    await execaCommand(`cd ${gitstorePath} && git push origin HEAD -q`, {
+      shell: true
+    });
+  } catch (error) {
+    // No changes or error occurred
+    if (error && typeof error === 'object' && 'stdout' in error) {
+      const stdout = (error as any).stdout;
+      if (!stdout || stdout.trim() === '') {
+        // No changes
+        return;
+      }
+    }
+    console.error("Failed to sync with gitstore:", error);
   }
 }
 
