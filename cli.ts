@@ -130,19 +130,46 @@ async function getProjectPath(gitstorePath: string): Promise<string> {
   return join(gitstorePath, host, owner, repo);
 }
 
-// Find all .env* files
+// Find all .env* files recursively, skipping git repos
 async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
-  const { readdirSync } = await import("fs");
+  const { readdirSync, statSync } = await import("fs");
+  const { join: pathJoin } = await import("path");
 
   // Convert glob pattern to regex
   const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+  const results: string[] = [];
 
-  try {
-    const files = readdirSync(searchPath).filter((f) => regex.test(f));
-    return files;
-  } catch (error) {
-    return [];
+  function searchDirectory(dirPath: string, relativePath: string = "") {
+    try {
+      const entries = readdirSync(dirPath);
+
+      for (const entry of entries) {
+        const fullPath = pathJoin(dirPath, entry);
+        const relPath = relativePath ? pathJoin(relativePath, entry) : entry;
+
+        try {
+          const stat = statSync(fullPath);
+
+          if (stat.isDirectory()) {
+            // Skip if this directory is a git repo
+            const gitPath = pathJoin(fullPath, ".git");
+            if (!existsSync(gitPath)) {
+              searchDirectory(fullPath, relPath);
+            }
+          } else if (stat.isFile() && regex.test(entry)) {
+            results.push(relPath);
+          }
+        } catch {
+          // Skip entries we can't stat
+        }
+      }
+    } catch {
+      // Skip directories we can't read
+    }
   }
+
+  searchDirectory(searchPath);
+  return results;
 }
 
 // Push .env* files to gitstore
@@ -167,7 +194,12 @@ async function pushToGitstore(gitstoreUrl: string) {
   // Copy each file to gitstore
   for (const file of localFiles) {
     const destPath = join(projectPath, file);
+    const destDir = join(destPath, "..");
+    if (!existsSync(destDir)) {
+      mkdirSync(destDir, { recursive: true });
+    }
     copyFileSync(file, destPath);
+    console.log(`→ ${file}`);
   }
 
   // Commit and push
@@ -215,7 +247,12 @@ async function pullFromGitstore(gitstoreUrl: string) {
   for (const file of remoteFiles) {
     const sourcePath = join(projectPath, file);
     const destPath = file;
+    const destDir = join(destPath, "..");
+    if (!existsSync(destDir)) {
+      mkdirSync(destDir, { recursive: true });
+    }
     copyFileSync(sourcePath, destPath);
+    console.log(`← ${file}`);
   }
 }
 
@@ -254,10 +291,20 @@ async function syncWithGitstore(gitstoreUrl: string) {
 
     if (!localExists && remoteExists) {
       // Only in gitstore, pull it
+      const localDir = join(localPath, "..");
+      if (!existsSync(localDir)) {
+        mkdirSync(localDir, { recursive: true });
+      }
       copyFileSync(remotePath, localPath);
+      console.log(`← ${file}`);
     } else if (localExists && !remoteExists) {
       // Only local, push it
+      const remoteDir = join(remotePath, "..");
+      if (!existsSync(remoteDir)) {
+        mkdirSync(remoteDir, { recursive: true });
+      }
       copyFileSync(localPath, remotePath);
+      console.log(`→ ${file}`);
       hasChanges = true;
     } else if (localExists && remoteExists) {
       // Both exist, compare modification times
@@ -268,11 +315,22 @@ async function syncWithGitstore(gitstoreUrl: string) {
       const remoteMtime = (await remoteStat.stat()).mtime;
 
       if (localMtime > remoteMtime) {
+        const remoteDir = join(remotePath, "..");
+        if (!existsSync(remoteDir)) {
+          mkdirSync(remoteDir, { recursive: true });
+        }
         copyFileSync(localPath, remotePath);
+        console.log(`→ ${file} (newer)`);
         hasChanges = true;
       } else if (remoteMtime > localMtime) {
+        const localDir = join(localPath, "..");
+        if (!existsSync(localDir)) {
+          mkdirSync(localDir, { recursive: true });
+        }
         copyFileSync(remotePath, localPath);
+        console.log(`← ${file} (newer)`);
       } else {
+        console.log(`= ${file}`);
       }
     }
   }
