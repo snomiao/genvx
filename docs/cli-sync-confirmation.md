@@ -17,3 +17,7 @@ Best for:
 
 Decision:
 Use Plan B so users see all env file diffs before confirming the sync.
+The sync command was later removed from the CLI; confirmation remains only for the internal sync helper.
+
+Output tweak:
+- When push/pull/sync detect no env changes, print a single "." to indicate already up-to-date.

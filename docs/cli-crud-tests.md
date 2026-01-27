@@ -11,17 +11,17 @@ Best for:
 Plan B: Directly test helper functions by exporting them.
 Pros:
 - Deterministic control of temp paths and repo state.
-- Easier to assert CRUD outcomes in gitstore and local.
+- Easier to assert push/pull outcomes in gitstore and local.
 - Faster and less flaky in CI.
 Cons:
 - Exposes internal helpers as exports.
 Best for:
-- Focused behavior verification for temp dir selection and file sync.
+- Focused behavior verification for temp dir selection and file transfer.
 
 Matrix extension:
-- Direction axis: local-origin vs remote-origin changes.
-- CRUD axis: create/read/update/delete applied at the source.
-- Expectation: `sync` always converges gitstore to local state, so remote-origin changes are overwritten.
+- Axis 1: temp dir selection (with vs without `node_modules`).
+- Axis 2: command intent (push vs pull vs sync).
+- Expectation: push/pull are one-way, and sync is pull then push.
 
 Plan C: Mixed approach with a small CLI smoke test plus helper-level tests.
 Pros:

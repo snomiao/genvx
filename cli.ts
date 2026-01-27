@@ -22,6 +22,40 @@ async function ensureSecurePermissions(filePath: string) {
   }
 }
 
+function getNullPath(): string {
+  return platform() === "win32" ? "NUL" : "/dev/null";
+}
+
+function runGit(args: string[], cwd: string): { stdout: string } {
+  const result = Bun.spawnSync({
+    cmd: ["git", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : "";
+    throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  }
+
+  const stdout = result.stdout ? new TextDecoder().decode(result.stdout) : "";
+  return { stdout };
+}
+
+function formatLineDelta(file: string, added: number, removed: number): string {
+  if (added === 0 && removed === 0) {
+    return file;
+  }
+  if (added > 0 && removed === 0) {
+    return `+${added} ${file}`;
+  }
+  if (removed > 0 && added === 0) {
+    return `-${removed} ${file}`;
+  }
+  return `+${added} -${removed} ${file}`;
+}
+
 async function confirmSync(): Promise<boolean> {
   if (!process.stdin.isTTY) {
     return true;
@@ -170,6 +204,143 @@ export async function syncGitstore(gitstoreUrl: string): Promise<string> {
   return gitstorePath;
 }
 
+async function printGitstoreDiff(gitstorePath: string, projectPath: string): Promise<boolean> {
+  const result = await execaCommand(`cd ${gitstorePath} && git status --short -M`, { shell: true });
+  const statusLines = result.stdout.trim().split("\n").filter(line => line);
+
+  if (statusLines.length === 0) {
+    console.log(".");
+    return false;
+  }
+
+  const projectDirName = projectPath.split("/").pop() || "";
+  const relativePrefix = new RegExp(`^.*${projectDirName}/`);
+  const numstatMap = new Map<string, { added: number; removed: number }>();
+
+  try {
+    const numstatResult = await execaCommand(`cd ${gitstorePath} && git diff --numstat`, { shell: true });
+    const lines = numstatResult.stdout
+      .trim()
+      .split("\n")
+      .filter(line => line)
+      .map(line => line.split("\t"))
+      .filter(parts => parts.length >= 3);
+
+    for (const parts of lines) {
+      const added = Number(parts[0]) || 0;
+      const removed = Number(parts[1]) || 0;
+      const rawPath = parts.slice(2).join("\t");
+      const pathPart = rawPath.includes("=>") ? rawPath.split("=>")[1]?.trim() : rawPath;
+      const normalizedPath = (pathPart || rawPath).replace(/[{}]/g, "").trim();
+      const relativePath = normalizedPath.replace(relativePrefix, "");
+      numstatMap.set(relativePath, { added, removed });
+
+      if (rawPath.includes("=>")) {
+        const oldPart = rawPath.split("=>")[0]?.replace(/[{}]/g, "").trim() || "";
+        const oldRelative = oldPart.replace(relativePrefix, "");
+        numstatMap.set(oldRelative, { added, removed });
+      }
+    }
+  } catch {
+    // Ignore numstat errors
+  }
+
+  console.log("Pending env file changes:");
+  for (const line of statusLines) {
+    const status = line.substring(0, 2).trim();
+    const filePath = line.substring(3);
+    const relativePath = filePath.replace(relativePrefix, "");
+    const counts = numstatMap.get(relativePath);
+    const suffix = counts ? ` +${counts.added} -${counts.removed}` : "";
+
+    if (status === "A" || status === "??") {
+      console.log(`+ ${relativePath}${suffix}`);
+    } else if (status === "M") {
+      console.log(`M ${relativePath}${suffix}`);
+    } else if (status === "D") {
+      console.log(`- ${relativePath}${suffix}`);
+    } else if (status.startsWith("R")) {
+      const [oldFile, newFile] = filePath.split(" -> ");
+      const oldRelative = oldFile?.replace(relativePrefix, "") || "";
+      const newRelative = newFile?.replace(relativePrefix, "") || "";
+      console.log(`R ${oldRelative} → ${newRelative}${suffix}`);
+    }
+  }
+
+  try {
+    const diffResult = await execaCommand(`cd ${gitstorePath} && git diff --stat`, { shell: true });
+    if (diffResult.stdout.trim()) {
+      console.log(diffResult.stdout.trim());
+    }
+
+    const numstatResult = await execaCommand(`cd ${gitstorePath} && git diff --numstat`, { shell: true });
+    const lines = numstatResult.stdout
+      .trim()
+      .split("\n")
+      .filter(line => line)
+      .map(line => line.split("\t"))
+      .filter(parts => parts.length >= 2);
+
+    if (lines.length > 0) {
+      const added = lines.reduce((sum, parts) => sum + (Number(parts[0]) || 0), 0);
+      const removed = lines.reduce((sum, parts) => sum + (Number(parts[1]) || 0), 0);
+      console.log(`Lines: +${added} -${removed}`);
+    }
+  } catch {
+    // Ignore diff errors
+  }
+
+  return true;
+}
+
+async function getPullChanges(projectPath: string, remoteFiles: string[]) {
+  const changes: Array<{ status: string; file: string; added: number; removed: number }> = [];
+
+  for (const file of remoteFiles) {
+    const sourcePath = join(projectPath, file);
+    const destPath = file;
+    const destExists = existsSync(destPath);
+
+    if (destExists) {
+      const [sourceContent, destContent] = await Promise.all([
+        readFile(sourcePath, "utf-8"),
+        readFile(destPath, "utf-8"),
+      ]);
+
+      if (sourceContent === destContent) {
+        continue;
+      }
+    }
+
+    const leftPath = destExists ? destPath : getNullPath();
+    let addedFile = 0;
+    let removedFile = 0;
+
+    try {
+      const diffNumstat = runGit(["diff", "--no-index", "--numstat", "--", leftPath, sourcePath], process.cwd());
+      const lines = diffNumstat.stdout
+        .trim()
+        .split("\n")
+        .filter(line => line)
+        .map(line => line.split("\t"))
+        .filter(parts => parts.length >= 2);
+
+      for (const parts of lines) {
+        const added = Number(parts[0]) || 0;
+        const removed = Number(parts[1]) || 0;
+        addedFile += added;
+        removedFile += removed;
+      }
+    } catch {
+      // Ignore diff errors
+    }
+
+    changes.push({ status: destExists ? "M" : "+", file, added: addedFile, removed: removedFile });
+  }
+
+  return changes;
+}
+
 // Get the project's path within gitstore
 export async function getProjectPath(gitstorePath: string): Promise<string> {
   const gitRemote = await getGitRemote();
@@ -267,21 +438,39 @@ export async function pushToGitstore(gitstoreUrl: string) {
     if (!existsSync(destDir)) {
       await mkdir(destDir, { recursive: true });
     }
+
+    let addedFile = 0;
+    let removedFile = 0;
+    try {
+      const leftPath = existsSync(destPath) ? destPath : getNullPath();
+      const diffNumstat = runGit(["diff", "--no-index", "--numstat", "--", leftPath, file], process.cwd());
+      const lines = diffNumstat.stdout
+        .trim()
+        .split("\n")
+        .filter(line => line)
+        .map(line => line.split("\t"))
+        .filter(parts => parts.length >= 2);
+
+      for (const parts of lines) {
+        addedFile += Number(parts[0]) || 0;
+        removedFile += Number(parts[1]) || 0;
+      }
+    } catch {
+      // Ignore diff errors
+    }
+
     await copyFile(file, destPath);
-    console.log(`→ ${file}`);
+    console.log(`→ ${formatLineDelta(file, addedFile, removedFile)}`);
   }
 
   // Commit and push
   try {
-    await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
-
-    // Check if there are changes to commit
-    try {
-      await execaCommand(`cd ${gitstorePath} && git diff-index --quiet HEAD`, { shell: true });
+    const hasChanges = await printGitstoreDiff(gitstorePath, projectPath);
+    if (!hasChanges) {
       return;
-    } catch {
-      // There are changes, proceed with commit
     }
+
+    await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
 
     const gitRemote = await getGitRemote();
     const { owner, repo } = parseGitRemote(gitRemote);
@@ -312,10 +501,31 @@ export async function pullFromGitstore(gitstoreUrl: string) {
     return;
   }
 
+  const changes = await getPullChanges(projectPath, remoteFiles);
+  if (changes.length === 0) {
+    for (const file of remoteFiles) {
+      console.log(`← ${formatLineDelta(file, 0, 0)}`);
+    }
+    console.log(".");
+    return;
+  }
+
+  console.log("Pending env file changes:");
+  let addedTotal = 0;
+  let removedTotal = 0;
+  for (const change of changes) {
+    addedTotal += change.added;
+    removedTotal += change.removed;
+    console.log(`${change.status} ${formatLineDelta(change.file, change.added, change.removed)}`);
+  }
+  if (addedTotal !== 0 || removedTotal !== 0) {
+    console.log(`Lines: +${addedTotal} -${removedTotal}`);
+  }
+
   // Copy each file from gitstore to local
-  for (const file of remoteFiles) {
-    const sourcePath = join(projectPath, file);
-    const destPath = file;
+  for (const change of changes) {
+    const sourcePath = join(projectPath, change.file);
+    const destPath = change.file;
     const destDir = join(destPath, "..");
     if (!existsSync(destDir)) {
       await mkdir(destDir, { recursive: true });
@@ -325,7 +535,7 @@ export async function pullFromGitstore(gitstoreUrl: string) {
     // Set secure permissions on pulled .env files
     await ensureSecurePermissions(destPath);
 
-    console.log(`← ${file}`);
+    console.log(`← ${formatLineDelta(change.file, change.added, change.removed)}`);
   }
 }
 
@@ -371,43 +581,9 @@ export async function syncWithGitstore(gitstoreUrl: string) {
 
   // Use git status to detect changes (with rename detection)
   try {
-    const result = await execaCommand(`cd ${gitstorePath} && git status --short -M`, { shell: true });
-    const statusLines = result.stdout.trim().split('\n').filter(line => line);
-
-    if (statusLines.length === 0) {
+    const hasChanges = await printGitstoreDiff(gitstorePath, projectPath);
+    if (!hasChanges) {
       return;
-    }
-
-    // Parse and display git status
-    console.log("Pending env file changes:");
-    for (const line of statusLines) {
-      const status = line.substring(0, 2).trim();
-      const filePath = line.substring(3);
-
-      // Extract just the filename relative to projectPath
-      const relativePath = filePath.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '');
-
-      if (status === 'A' || status === '??') {
-        console.log(`+ ${relativePath}`);
-      } else if (status === 'M') {
-        console.log(`M ${relativePath}`);
-      } else if (status === 'D') {
-        console.log(`- ${relativePath}`);
-      } else if (status.startsWith('R')) {
-        const [oldFile, newFile] = filePath.split(' -> ');
-        const oldRelative = oldFile?.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '') || '';
-        const newRelative = newFile?.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '') || '';
-        console.log(`R ${oldRelative} → ${newRelative}`);
-      }
-    }
-
-    try {
-      const diffResult = await execaCommand(`cd ${gitstorePath} && git diff --stat`, { shell: true });
-      if (diffResult.stdout.trim()) {
-        console.log(diffResult.stdout.trim());
-      }
-    } catch {
-      // Ignore diff errors
     }
 
     const proceed = await confirmSync();
@@ -475,18 +651,10 @@ export function runCli() {
       }
     })
     .command(
-      ["$0", "sync", "s"],
-      "Sync .env* files bidirectionally with gitstore (default)",
+      ["sync", "s"],
+      "Pull then push .env* files",
       () => {},
       async (argv) => {
-        // Reject if user typed "version" as a command
-        const firstArg = process.argv[2];
-        if (firstArg === 'version') {
-          console.error('Unknown command: version');
-          console.error('\nDid you mean --version?\n');
-          process.exit(1);
-        }
-
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
         if (!gitstore) {
           console.error("Error: GENVX_STORE not configured");
@@ -494,14 +662,13 @@ export function runCli() {
           process.exit(1);
         }
 
-        // Check if we're inside a gitstore directory
+        // Check if we're inside gitstore
         const cwd = process.cwd();
         if (isInsideGitstoreDir(cwd)) {
           console.error("Error: Cannot run genvx inside the gitstore directory");
           process.exit(1);
         }
 
-        // Check if current repo is the gitstore itself
         try {
           const currentRemote = await getGitRemote();
           const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
@@ -511,16 +678,17 @@ export function runCli() {
             process.exit(1);
           }
         } catch {
-          // Not in a git repo, that's fine - will error later if needed
+          // Not in a git repo, that's fine
         }
 
-        await syncWithGitstore(gitstore);
+        await pullFromGitstore(gitstore);
+        await pushToGitstore(gitstore);
         await cleanup();
       }
     )
     .command(
-      ["push", "p"],
-      "Push .env* files to gitstore",
+      ["push", "p", "save"],
+      "Save .env* files to gitstore",
       () => {},
       async (argv) => {
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
@@ -554,8 +722,8 @@ export function runCli() {
       }
     )
     .command(
-      ["pull"],
-      "Pull .env* files from gitstore",
+      ["pull", "load"],
+      "Load .env* files from gitstore",
       () => {},
       async (argv) => {
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
@@ -588,10 +756,12 @@ export function runCli() {
         await cleanup();
       }
     )
-    .example("$0", "Sync .env* files (default command)")
+    .example("$0 save", "Save all .env* files to gitstore")
+    .example("$0 load", "Load all .env* files from gitstore")
+    .example("$0 sync", "Pull then push .env* files")
     .example("$0 push", "Push all .env* files to gitstore")
     .example("$0 pull", "Pull all .env* files from gitstore")
-    .example("$0 --gitstore=https://github.com/user/secrets.git", "Sync with specific gitstore")
+    .example("$0 save --gitstore=https://github.com/user/secrets.git", "Save with specific gitstore")
     .help()
     .alias("h", "help")
     .version()

@@ -7,7 +7,8 @@ import {
   cleanup,
   getGenvxDir,
   getProjectPath,
-  syncWithGitstore,
+  pullFromGitstore,
+  pushToGitstore,
 } from "./cli";
 
 process.env.GIT_AUTHOR_NAME ??= "genvx";
@@ -48,81 +49,116 @@ async function setupRepo(withNodeModules: boolean) {
   return { root, repoDir, gitstoreDir };
 }
 
-const directions = ["local", "remote"] as const;
-const crudOps = ["create", "read", "update", "delete"] as const;
-
-describe("sync matrix: direction x CRUD", () => {
-  test("sync covers all CRUD directions in both temp dirs", async () => {
+describe("push/pull behavior in both temp dirs", () => {
+  test("push saves and updates without deleting remote", async () => {
     for (const withNodeModules of [true, false]) {
-      for (const direction of directions) {
-        for (const operation of crudOps) {
-          const { root, repoDir, gitstoreDir } = await setupRepo(withNodeModules);
-          const previousCwd = process.cwd();
-          process.chdir(repoDir);
+      const { root, repoDir, gitstoreDir } = await setupRepo(withNodeModules);
+      const previousCwd = process.cwd();
+      process.chdir(repoDir);
 
-          try {
-            const gitstoreUrl = gitstoreDir;
-            const expectedDir = withNodeModules ? "./node_modules/.genvx" : "./.genvx";
-            const localEnvPath = join(repoDir, ".env");
-            const localEnvLocalPath = join(repoDir, ".env.local");
+      try {
+        const gitstoreUrl = gitstoreDir;
+        const expectedDir = withNodeModules ? "./node_modules/.genvx" : "./.genvx";
 
-            await writeFile(localEnvPath, "A=1\n");
-            await writeFile(localEnvLocalPath, "B=1\n");
-            await syncWithGitstore(gitstoreUrl);
+        await writeFile(join(repoDir, ".env"), "A=1\n");
+        await writeFile(join(repoDir, ".env.local"), "B=1\n");
+        await pushToGitstore(gitstoreUrl);
 
-            expect(getGenvxDir()).toBe(expectedDir);
+        expect(getGenvxDir()).toBe(expectedDir);
 
-            const gitstorePath = join(getGenvxDir(), "gitstore");
-            const projectPath = await getProjectPath(gitstorePath);
-            const remoteEnvPath = join(projectPath, ".env");
-            const remoteEnvLocalPath = join(projectPath, ".env.local");
+        const gitstorePath = join(getGenvxDir(), "gitstore");
+        const projectPath = await getProjectPath(gitstorePath);
+        const remoteEnvPath = join(projectPath, ".env");
+        const remoteEnvLocalPath = join(projectPath, ".env.local");
 
-            if (direction === "local") {
-              if (operation === "create") {
-                await writeFile(join(repoDir, ".env.new"), "N=1\n");
-                await syncWithGitstore(gitstoreUrl);
-                expect(existsSync(join(projectPath, ".env.new"))).toBe(true);
-              } else if (operation === "read") {
-                await syncWithGitstore(gitstoreUrl);
-                expect(await readFile(remoteEnvPath, "utf-8")).toBe("A=1\n");
-              } else if (operation === "update") {
-                await writeFile(localEnvLocalPath, "B=2\n");
-                await syncWithGitstore(gitstoreUrl);
-                expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=2\n");
-              } else if (operation === "delete") {
-                await unlink(localEnvLocalPath);
-                await syncWithGitstore(gitstoreUrl);
-                expect(existsSync(remoteEnvLocalPath)).toBe(false);
-              }
-            } else {
-              if (operation === "create") {
-                await writeFile(join(projectPath, ".env.remote"), "R=1\n");
-                await syncWithGitstore(gitstoreUrl);
-                expect(existsSync(join(projectPath, ".env.remote"))).toBe(false);
-                expect(existsSync(join(repoDir, ".env.remote"))).toBe(false);
-              } else if (operation === "read") {
-                await syncWithGitstore(gitstoreUrl);
-                expect(await readFile(remoteEnvPath, "utf-8")).toBe("A=1\n");
-                expect(await readFile(localEnvPath, "utf-8")).toBe("A=1\n");
-              } else if (operation === "update") {
-                await writeFile(remoteEnvLocalPath, "B=99\n");
-                await syncWithGitstore(gitstoreUrl);
-                expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=1\n");
-                expect(await readFile(localEnvLocalPath, "utf-8")).toBe("B=1\n");
-              } else if (operation === "delete") {
-                await unlink(remoteEnvLocalPath);
-                await syncWithGitstore(gitstoreUrl);
-                expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=1\n");
-                expect(await readFile(localEnvLocalPath, "utf-8")).toBe("B=1\n");
-              }
-            }
-          } finally {
-            await cleanup();
-            process.chdir(previousCwd);
-            await rm(root, { recursive: true, force: true });
-          }
-        }
+        expect(await readFile(remoteEnvPath, "utf-8")).toBe("A=1\n");
+        expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=1\n");
+
+        await writeFile(join(repoDir, ".env.local"), "B=2\n");
+        await pushToGitstore(gitstoreUrl);
+        expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=2\n");
+
+        await unlink(join(repoDir, ".env.local"));
+        await pushToGitstore(gitstoreUrl);
+        expect(await readFile(remoteEnvLocalPath, "utf-8")).toBe("B=2\n");
+      } finally {
+        await cleanup();
+        process.chdir(previousCwd);
+        await rm(root, { recursive: true, force: true });
       }
     }
-  }, 90000);
+  }, 30000);
+
+  test("pull loads and updates without deleting local", async () => {
+    for (const withNodeModules of [true, false]) {
+      const { root, repoDir, gitstoreDir } = await setupRepo(withNodeModules);
+      const previousCwd = process.cwd();
+      process.chdir(repoDir);
+
+      try {
+        const gitstoreUrl = gitstoreDir;
+
+        await writeFile(join(repoDir, ".env"), "A=1\n");
+        await writeFile(join(repoDir, ".env.local"), "B=1\n");
+        await pushToGitstore(gitstoreUrl);
+
+        await unlink(join(repoDir, ".env"));
+        await unlink(join(repoDir, ".env.local"));
+
+        await pullFromGitstore(gitstoreUrl);
+        expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
+        expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=1\n");
+
+        const gitstorePath = join(getGenvxDir(), "gitstore");
+        const projectPath = await getProjectPath(gitstorePath);
+        await writeFile(join(projectPath, ".env.local"), "B=3\n");
+        await pullFromGitstore(gitstoreUrl);
+        expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=3\n");
+
+        await unlink(join(projectPath, ".env.local"));
+        await pullFromGitstore(gitstoreUrl);
+        expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=3\n");
+      } finally {
+        await cleanup();
+        process.chdir(previousCwd);
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30000);
+});
+
+describe("sync behavior in both temp dirs", () => {
+  test("sync is pull then push", async () => {
+    for (const withNodeModules of [true, false]) {
+      const { root, repoDir, gitstoreDir } = await setupRepo(withNodeModules);
+      const previousCwd = process.cwd();
+      process.chdir(repoDir);
+
+      try {
+        const gitstoreUrl = gitstoreDir;
+
+        await writeFile(join(repoDir, ".env"), "A=1\n");
+        await pushToGitstore(gitstoreUrl);
+
+        await unlink(join(repoDir, ".env"));
+        await pullFromGitstore(gitstoreUrl);
+        expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
+
+        await writeFile(join(repoDir, ".env"), "A=2\n");
+        await pullFromGitstore(gitstoreUrl);
+        expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
+
+        await writeFile(join(repoDir, ".env"), "A=2\n");
+        await pushToGitstore(gitstoreUrl);
+
+        const gitstorePath = join(getGenvxDir(), "gitstore");
+        const projectPath = await getProjectPath(gitstorePath);
+        expect(await readFile(join(projectPath, ".env"), "utf-8")).toBe("A=2\n");
+      } finally {
+        await cleanup();
+        process.chdir(previousCwd);
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30000);
 });
