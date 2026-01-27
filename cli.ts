@@ -6,6 +6,7 @@ import { existsSync } from "fs";
 import { readFile, writeFile, copyFile, mkdir, rm, unlink, chmod } from "fs/promises";
 import { join, resolve, sep } from "path";
 import { platform } from "os";
+import { createInterface } from "readline/promises";
 
 // Ensure file has secure permissions (600)
 async function ensureSecurePermissions(filePath: string) {
@@ -21,8 +22,22 @@ async function ensureSecurePermissions(filePath: string) {
   }
 }
 
+async function confirmSync(): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    return true;
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question("Proceed with sync? [y/N] ")).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 // Parse git remote URL to extract host, owner, and repo
-function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo: string } {
+export function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo: string } {
   // Normalize SSH URLs to HTTPS
   let url = remoteUrl;
   if (url.startsWith("git@")) {
@@ -44,7 +59,7 @@ function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo:
 }
 
 // Get git remote URL for current repo
-async function getGitRemote(): Promise<string> {
+export async function getGitRemote(): Promise<string> {
   try {
     const result = await execaCommand("git config --get remote.origin.url", {
       shell: true,
@@ -92,11 +107,11 @@ async function getGitstoreConfig(cliGitstore?: string): Promise<string | null> {
   return null;
 }
 
-function getGenvxDir(): string {
+export function getGenvxDir(): string {
   return existsSync("node_modules") ? "./node_modules/.genvx" : "./.genvx";
 }
 
-function isInsideGitstoreDir(cwd: string): boolean {
+export function isInsideGitstoreDir(cwd: string): boolean {
   const normalizedCwd = resolve(cwd);
   return (
     normalizedCwd.includes(`${sep}.genvx${sep}gitstore`) ||
@@ -105,7 +120,7 @@ function isInsideGitstoreDir(cwd: string): boolean {
 }
 
 // Setup .genvx directory
-async function setupGenvxDir(): Promise<string> {
+export async function setupGenvxDir(): Promise<string> {
   const genvxDir = getGenvxDir();
   const gitignorePath = join(genvxDir, ".gitignore");
 
@@ -121,7 +136,7 @@ async function setupGenvxDir(): Promise<string> {
 }
 
 // Clone or pull gitstore repository
-async function syncGitstore(gitstoreUrl: string): Promise<string> {
+export async function syncGitstore(gitstoreUrl: string): Promise<string> {
   const genvxDir = await setupGenvxDir();
   const gitstorePath = join(genvxDir, "gitstore");
 
@@ -156,14 +171,14 @@ async function syncGitstore(gitstoreUrl: string): Promise<string> {
 }
 
 // Get the project's path within gitstore
-async function getProjectPath(gitstorePath: string): Promise<string> {
+export async function getProjectPath(gitstorePath: string): Promise<string> {
   const gitRemote = await getGitRemote();
   const { host, owner, repo } = parseGitRemote(gitRemote);
   return join(gitstorePath, host, owner, repo);
 }
 
 // Find all .env* files recursively, skipping git repos and common build/dependency directories
-async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
+export async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<string[]> {
   const { readdirSync, statSync } = await import("fs");
   const { join: pathJoin } = await import("path");
 
@@ -224,7 +239,7 @@ async function findEnvFiles(pattern: string, searchPath: string = "."): Promise<
 }
 
 // Push .env* files to gitstore
-async function pushToGitstore(gitstoreUrl: string) {
+export async function pushToGitstore(gitstoreUrl: string) {
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -280,7 +295,7 @@ async function pushToGitstore(gitstoreUrl: string) {
 }
 
 // Pull .env* files from gitstore
-async function pullFromGitstore(gitstoreUrl: string) {
+export async function pullFromGitstore(gitstoreUrl: string) {
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -315,7 +330,7 @@ async function pullFromGitstore(gitstoreUrl: string) {
 }
 
 // Sync .env* files bidirectionally using git diff
-async function syncWithGitstore(gitstoreUrl: string) {
+export async function syncWithGitstore(gitstoreUrl: string) {
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -364,6 +379,7 @@ async function syncWithGitstore(gitstoreUrl: string) {
     }
 
     // Parse and display git status
+    console.log("Pending env file changes:");
     for (const line of statusLines) {
       const status = line.substring(0, 2).trim();
       const filePath = line.substring(3);
@@ -383,6 +399,21 @@ async function syncWithGitstore(gitstoreUrl: string) {
         const newRelative = newFile?.replace(new RegExp(`^.*${projectPath.split('/').pop()}/`), '') || '';
         console.log(`R ${oldRelative} → ${newRelative}`);
       }
+    }
+
+    try {
+      const diffResult = await execaCommand(`cd ${gitstorePath} && git diff --stat`, { shell: true });
+      if (diffResult.stdout.trim()) {
+        console.log(diffResult.stdout.trim());
+      }
+    } catch {
+      // Ignore diff errors
+    }
+
+    const proceed = await confirmSync();
+    if (!proceed) {
+      console.log("Sync cancelled.");
+      return;
     }
 
     // Commit and push
@@ -407,7 +438,7 @@ async function syncWithGitstore(gitstoreUrl: string) {
 }
 
 // Cleanup .genvx directory
-async function cleanup() {
+export async function cleanup() {
   const genvxDir = getGenvxDir();
   if (existsSync(genvxDir)) {
     try {
@@ -419,151 +450,157 @@ async function cleanup() {
 }
 
 // Setup yargs CLI
-yargs(hideBin(process.argv))
-  .scriptName("genvx")
-  .usage("$0 [command] [options]")
-  .option("gitstore", {
-    alias: "g",
-    type: "string",
-    description: "Git repository URL for storing env files",
-  })
-  .fail((msg, err, yargs) => {
-    // Check if user typed "version" as a command
-    const firstArg = process.argv[2];
-    if (firstArg === 'version') {
-      console.error('Unknown command: version');
-      console.error('\nDid you mean --version?\n');
-      console.error(yargs.help());
-      process.exit(1);
-    }
-    if (err) throw err;
-    if (msg) {
-      console.error(msg);
-      process.exit(1);
-    }
-  })
-  .command(
-    ["$0", "sync", "s"],
-    "Sync .env* files bidirectionally with gitstore (default)",
-    () => {},
-    async (argv) => {
-      // Reject if user typed "version" as a command
+export function runCli() {
+  yargs(hideBin(process.argv))
+    .scriptName("genvx")
+    .usage("$0 [command] [options]")
+    .option("gitstore", {
+      alias: "g",
+      type: "string",
+      description: "Git repository URL for storing env files",
+    })
+    .fail((msg, err, yargs) => {
+      // Check if user typed "version" as a command
       const firstArg = process.argv[2];
       if (firstArg === 'version') {
         console.error('Unknown command: version');
         console.error('\nDid you mean --version?\n');
+        console.error(yargs.help());
         process.exit(1);
       }
-
-      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-      if (!gitstore) {
-        console.error("Error: GENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
+      if (err) throw err;
+      if (msg) {
+        console.error(msg);
         process.exit(1);
       }
-
-      // Check if we're inside a gitstore directory
-      const cwd = process.cwd();
-      if (isInsideGitstoreDir(cwd)) {
-        console.error("Error: Cannot run genvx inside the gitstore directory");
-        process.exit(1);
-      }
-
-      // Check if current repo is the gitstore itself
-      try {
-        const currentRemote = await getGitRemote();
-        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-        if (normalizedCurrent === normalizedGitstore) {
-          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+    })
+    .command(
+      ["$0", "sync", "s"],
+      "Sync .env* files bidirectionally with gitstore (default)",
+      () => {},
+      async (argv) => {
+        // Reject if user typed "version" as a command
+        const firstArg = process.argv[2];
+        if (firstArg === 'version') {
+          console.error('Unknown command: version');
+          console.error('\nDid you mean --version?\n');
           process.exit(1);
         }
-      } catch {
-        // Not in a git repo, that's fine - will error later if needed
-      }
 
-      await syncWithGitstore(gitstore);
-      await cleanup();
-    }
-  )
-  .command(
-    ["push", "p"],
-    "Push .env* files to gitstore",
-    () => {},
-    async (argv) => {
-      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-      if (!gitstore) {
-        console.error("Error: GENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
-        process.exit(1);
-      }
-
-      // Check if we're inside gitstore
-      const cwd = process.cwd();
-      if (isInsideGitstoreDir(cwd)) {
-        console.error("Error: Cannot run genvx inside the gitstore directory");
-        process.exit(1);
-      }
-
-      try {
-        const currentRemote = await getGitRemote();
-        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-        if (normalizedCurrent === normalizedGitstore) {
-          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
+        if (!gitstore) {
+          console.error("Error: GENVX_STORE not configured");
+          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
           process.exit(1);
         }
-      } catch {
-        // Not in a git repo, that's fine
-      }
 
-      await pushToGitstore(gitstore);
-      await cleanup();
-    }
-  )
-  .command(
-    ["pull"],
-    "Pull .env* files from gitstore",
-    () => {},
-    async (argv) => {
-      const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-      if (!gitstore) {
-        console.error("Error: GENVX_STORE not configured");
-        console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
-        process.exit(1);
-      }
-
-      // Check if we're inside gitstore
-      const cwd = process.cwd();
-      if (isInsideGitstoreDir(cwd)) {
-        console.error("Error: Cannot run genvx inside the gitstore directory");
-        process.exit(1);
-      }
-
-      try {
-        const currentRemote = await getGitRemote();
-        const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-        const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-        if (normalizedCurrent === normalizedGitstore) {
-          console.error("Error: Cannot run genvx inside the gitstore repository itself");
+        // Check if we're inside a gitstore directory
+        const cwd = process.cwd();
+        if (isInsideGitstoreDir(cwd)) {
+          console.error("Error: Cannot run genvx inside the gitstore directory");
           process.exit(1);
         }
-      } catch {
-        // Not in a git repo, that's fine
-      }
 
-      await pullFromGitstore(gitstore);
-      await cleanup();
-    }
-  )
-  .example("$0", "Sync .env* files (default command)")
-  .example("$0 push", "Push all .env* files to gitstore")
-  .example("$0 pull", "Pull all .env* files from gitstore")
-  .example("$0 --gitstore=https://github.com/user/secrets.git", "Sync with specific gitstore")
-  .help()
-  .alias("h", "help")
-  .version()
-  .alias("v", "version")
-  .strictCommands()
-  .demandCommand(0, 0)
-  .parse();
+        // Check if current repo is the gitstore itself
+        try {
+          const currentRemote = await getGitRemote();
+          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+          if (normalizedCurrent === normalizedGitstore) {
+            console.error("Error: Cannot run genvx inside the gitstore repository itself");
+            process.exit(1);
+          }
+        } catch {
+          // Not in a git repo, that's fine - will error later if needed
+        }
+
+        await syncWithGitstore(gitstore);
+        await cleanup();
+      }
+    )
+    .command(
+      ["push", "p"],
+      "Push .env* files to gitstore",
+      () => {},
+      async (argv) => {
+        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
+        if (!gitstore) {
+          console.error("Error: GENVX_STORE not configured");
+          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
+          process.exit(1);
+        }
+
+        // Check if we're inside gitstore
+        const cwd = process.cwd();
+        if (isInsideGitstoreDir(cwd)) {
+          console.error("Error: Cannot run genvx inside the gitstore directory");
+          process.exit(1);
+        }
+
+        try {
+          const currentRemote = await getGitRemote();
+          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+          if (normalizedCurrent === normalizedGitstore) {
+            console.error("Error: Cannot run genvx inside the gitstore repository itself");
+            process.exit(1);
+          }
+        } catch {
+          // Not in a git repo, that's fine
+        }
+
+        await pushToGitstore(gitstore);
+        await cleanup();
+      }
+    )
+    .command(
+      ["pull"],
+      "Pull .env* files from gitstore",
+      () => {},
+      async (argv) => {
+        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
+        if (!gitstore) {
+          console.error("Error: GENVX_STORE not configured");
+          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
+          process.exit(1);
+        }
+
+        // Check if we're inside gitstore
+        const cwd = process.cwd();
+        if (isInsideGitstoreDir(cwd)) {
+          console.error("Error: Cannot run genvx inside the gitstore directory");
+          process.exit(1);
+        }
+
+        try {
+          const currentRemote = await getGitRemote();
+          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+          if (normalizedCurrent === normalizedGitstore) {
+            console.error("Error: Cannot run genvx inside the gitstore repository itself");
+            process.exit(1);
+          }
+        } catch {
+          // Not in a git repo, that's fine
+        }
+
+        await pullFromGitstore(gitstore);
+        await cleanup();
+      }
+    )
+    .example("$0", "Sync .env* files (default command)")
+    .example("$0 push", "Push all .env* files to gitstore")
+    .example("$0 pull", "Pull all .env* files from gitstore")
+    .example("$0 --gitstore=https://github.com/user/secrets.git", "Sync with specific gitstore")
+    .help()
+    .alias("h", "help")
+    .version()
+    .alias("v", "version")
+    .strictCommands()
+    .demandCommand(0, 0)
+    .parse();
+}
+
+if (import.meta.main) {
+  runCli();
+}
