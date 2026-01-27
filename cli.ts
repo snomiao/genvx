@@ -4,7 +4,7 @@ import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
 import { existsSync } from "fs";
 import { readFile, writeFile, copyFile, mkdir, rm, unlink, chmod } from "fs/promises";
-import { join } from "path";
+import { join, resolve, sep } from "path";
 import { platform } from "os";
 
 // Ensure file has secure permissions (600)
@@ -92,9 +92,21 @@ async function getGitstoreConfig(cliGitstore?: string): Promise<string | null> {
   return null;
 }
 
+function getGenvxDir(): string {
+  return existsSync("node_modules") ? "./node_modules/.genvx" : "./.genvx";
+}
+
+function isInsideGitstoreDir(cwd: string): boolean {
+  const normalizedCwd = resolve(cwd);
+  return (
+    normalizedCwd.includes(`${sep}.genvx${sep}gitstore`) ||
+    normalizedCwd.includes(`${sep}node_modules${sep}.genvx${sep}gitstore`)
+  );
+}
+
 // Setup .genvx directory
-async function setupGenvxDir() {
-  const genvxDir = "./node_modules/.genvx";
+async function setupGenvxDir(): Promise<string> {
+  const genvxDir = getGenvxDir();
   const gitignorePath = join(genvxDir, ".gitignore");
 
   if (!existsSync(genvxDir)) {
@@ -104,13 +116,14 @@ async function setupGenvxDir() {
   if (!existsSync(gitignorePath)) {
     await writeFile(gitignorePath, "*\n");
   }
+
+  return genvxDir;
 }
 
 // Clone or pull gitstore repository
 async function syncGitstore(gitstoreUrl: string): Promise<string> {
-  await setupGenvxDir();
-
-  const gitstorePath = "./node_modules/.genvx/gitstore";
+  const genvxDir = await setupGenvxDir();
+  const gitstorePath = join(genvxDir, "gitstore");
 
   if (!existsSync(gitstorePath)) {
     try {
@@ -395,7 +408,7 @@ async function syncWithGitstore(gitstoreUrl: string) {
 
 // Cleanup .genvx directory
 async function cleanup() {
-  const genvxDir = "./node_modules/.genvx";
+  const genvxDir = getGenvxDir();
   if (existsSync(genvxDir)) {
     try {
       await rm(genvxDir, { recursive: true, force: true });
@@ -451,7 +464,7 @@ yargs(hideBin(process.argv))
 
       // Check if we're inside a gitstore directory
       const cwd = process.cwd();
-      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+      if (isInsideGitstoreDir(cwd)) {
         console.error("Error: Cannot run genvx inside the gitstore directory");
         process.exit(1);
       }
@@ -487,7 +500,7 @@ yargs(hideBin(process.argv))
 
       // Check if we're inside gitstore
       const cwd = process.cwd();
-      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+      if (isInsideGitstoreDir(cwd)) {
         console.error("Error: Cannot run genvx inside the gitstore directory");
         process.exit(1);
       }
@@ -522,7 +535,7 @@ yargs(hideBin(process.argv))
 
       // Check if we're inside gitstore
       const cwd = process.cwd();
-      if (cwd.includes("/node_modules/.genvx/gitstore")) {
+      if (isInsideGitstoreDir(cwd)) {
         console.error("Error: Cannot run genvx inside the gitstore directory");
         process.exit(1);
       }
