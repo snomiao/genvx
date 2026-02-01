@@ -4,9 +4,11 @@ import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
 import { existsSync } from "fs";
 import { readFile, writeFile, copyFile, mkdir, rm, unlink, chmod } from "fs/promises";
-import { join, resolve, sep } from "path";
+import path, { join, resolve, sep } from "path";
 import { platform } from "os";
 import { createInterface } from "readline/promises";
+import { config, configDotenv } from "dotenv";
+import os from 'node:os'
 
 // Ensure file has secure permissions (600)
 async function ensureSecurePermissions(filePath: string) {
@@ -112,31 +114,13 @@ async function getGitstoreConfig(cliGitstore?: string): Promise<string | null> {
     return cliGitstore;
   }
 
-  // Priority 2: Environment variable
+  // Priority 2: Environment variables
+  config({ override: false, path: '.env.local' })
+  config({ override: false, path: '.env' })
+  config({ override: false, path: path.resolve(os.homedir(), '/.genvx/.env.local') })
+  config({ override: false, path: path.resolve(os.homedir(), '/.genvx/.env') })
   if (process.env.GENVX_STORE) {
     return process.env.GENVX_STORE;
-  }
-
-  // Priority 3: Project .env.local file
-  if (existsSync(".env.local")) {
-    const content = await readFile(".env.local", "utf-8");
-    const match = content.match(/^GENVX_STORE=(.+)$/m);
-    if (match && match[1]) {
-      return match[1].replace(/^["']|["']$/g, "");
-    }
-  }
-
-  // Priority 4: Global ~/.genvx/.env.local file (fallback)
-  const globalConfigPath = join(process.env.HOME || "/root", ".genvx", ".env.local");
-  if (existsSync(globalConfigPath)) {
-    // Ensure secure permissions on global config
-    await ensureSecurePermissions(globalConfigPath);
-
-    const content = await readFile(globalConfigPath, "utf-8");
-    const match = content.match(/^GENVX_STORE=(.+)$/m);
-    if (match && match[1]) {
-      return match[1].replace(/^["']|["']$/g, "");
-    }
   }
 
   return null;
@@ -714,7 +698,7 @@ export function runCli() {
     .command(
       ["sync", "s"],
       "Pull then push .env* files",
-      () => {},
+      () => { },
       async (argv) => {
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
         if (!gitstore) {
@@ -750,7 +734,7 @@ export function runCli() {
     .command(
       ["push", "p", "save"],
       "Save .env* files to gitstore",
-      () => {},
+      () => { },
       async (argv) => {
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
         if (!gitstore) {
@@ -785,7 +769,7 @@ export function runCli() {
     .command(
       ["pull", "load"],
       "Load .env* files from gitstore",
-      () => {},
+      () => { },
       async (argv) => {
         const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
         if (!gitstore) {
