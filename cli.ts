@@ -4,7 +4,7 @@ import { hideBin } from "yargs/helpers";
 import { execaCommand } from "execa";
 import { existsSync } from "fs";
 import { readFile, writeFile, copyFile, mkdir, rm, unlink, chmod } from "fs/promises";
-import path, { join, resolve, sep } from "path";
+import path, { join, resolve, sep, dirname } from "path";
 import { platform } from "os";
 import { createInterface } from "readline/promises";
 import { config, configDotenv } from "dotenv";
@@ -497,8 +497,8 @@ export async function pushToGitstore(gitstoreUrl: string) {
     await ensureSecurePermissions(file);
 
     const destPath = join(projectPath, file);
-    const destDir = join(destPath, "..");
-    if (!existsSync(destDir)) {
+    const destDir = dirname(destPath);
+    if (destDir !== "." && !existsSync(destDir)) {
       await mkdir(destDir, { recursive: true });
     }
 
@@ -571,8 +571,8 @@ export async function pullFromGitstore(gitstoreUrl: string) {
   for (const change of changes) {
     const sourcePath = join(projectPath, change.file);
     const destPath = change.file;
-    const destDir = join(destPath, "..");
-    if (!existsSync(destDir)) {
+    const destDir = dirname(destPath);
+    if (destDir !== "." && !existsSync(destDir)) {
       await mkdir(destDir, { recursive: true });
     }
     await copyFile(sourcePath, destPath);
@@ -617,8 +617,8 @@ export async function syncWithGitstore(gitstoreUrl: string) {
     await ensureSecurePermissions(file);
 
     const destPath = join(projectPath, file);
-    const destDir = join(destPath, "..");
-    if (!existsSync(destDir)) {
+    const destDir = dirname(destPath);
+    if (destDir !== "." && !existsSync(destDir)) {
       await mkdir(destDir, { recursive: true });
     }
     await copyFile(file, destPath);

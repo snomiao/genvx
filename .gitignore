@@ -35,4 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Claude Code local settings
 .claude/
 
+# package manager lock files
+package-lock.json
+
 TODO.md
