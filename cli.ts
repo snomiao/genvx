@@ -56,15 +56,16 @@ function formatLineDelta(file: string, added: number, removed: number): string {
   return `+${added} -${removed} ${file}`;
 }
 
-async function confirmSync(): Promise<boolean> {
+async function confirmAction(prompt: string = "Proceed? [Y/n] "): Promise<boolean> {
   if (!process.stdin.isTTY) {
     return true;
   }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = (await rl.question("Proceed with sync? [y/N] ")).trim().toLowerCase();
-    return answer === "y" || answer === "yes";
+    const answer = (await rl.question(prompt)).trim().toLowerCase();
+    // Default to 'yes' if user just presses Enter
+    return answer === "" || answer === "y" || answer === "yes";
   } finally {
     rl.close();
   }
@@ -341,6 +342,54 @@ async function getPullChanges(projectPath: string, remoteFiles: string[]) {
   return changes;
 }
 
+async function getPushChanges(projectPath: string, localFiles: string[]) {
+  const changes: Array<{ status: string; file: string; added: number; removed: number }> = [];
+
+  for (const file of localFiles) {
+    const sourcePath = file;
+    const destPath = join(projectPath, file);
+    const destExists = existsSync(destPath);
+
+    if (destExists) {
+      const [sourceContent, destContent] = await Promise.all([
+        readFile(sourcePath, "utf-8"),
+        readFile(destPath, "utf-8"),
+      ]);
+
+      if (sourceContent === destContent) {
+        continue;
+      }
+    }
+
+    const leftPath = destExists ? destPath : getNullPath();
+    let addedFile = 0;
+    let removedFile = 0;
+
+    try {
+      const diffNumstat = runGit(["diff", "--no-index", "--numstat", "--", leftPath, sourcePath], process.cwd());
+      const lines = diffNumstat.stdout
+        .trim()
+        .split("\n")
+        .filter(line => line)
+        .map(line => line.split("\t"))
+        .filter(parts => parts.length >= 2);
+
+      for (const parts of lines) {
+        const added = Number(parts[0]) || 0;
+        const removed = Number(parts[1]) || 0;
+        addedFile += added;
+        removedFile += removed;
+      }
+    } catch {
+      // Ignore diff errors
+    }
+
+    changes.push({ status: destExists ? "M" : "+", file, added: addedFile, removed: removedFile });
+  }
+
+  return changes;
+}
+
 // Get the project's path within gitstore
 export async function getProjectPath(gitstorePath: string): Promise<string> {
   const gitRemote = await getGitRemote();
@@ -428,8 +477,38 @@ export async function pushToGitstore(gitstoreUrl: string) {
     return;
   }
 
+  // Calculate changes before copying
+  const changes = await getPushChanges(projectPath, localFiles);
+  if (changes.length === 0) {
+    for (const file of localFiles) {
+      console.log(`→ ${formatLineDelta(file, 0, 0)}`);
+    }
+    console.log(".");
+    return;
+  }
+
+  console.log("Pending env file changes:");
+  let addedTotal = 0;
+  let removedTotal = 0;
+  for (const change of changes) {
+    addedTotal += change.added;
+    removedTotal += change.removed;
+    console.log(`${change.status} ${formatLineDelta(change.file, change.added, change.removed)}`);
+  }
+  if (addedTotal !== 0 || removedTotal !== 0) {
+    console.log(`Lines: +${addedTotal} -${removedTotal}`);
+  }
+
+  // Ask for confirmation before writing files
+  const proceed = await confirmAction("Proceed with push? [Y/n] ");
+  if (!proceed) {
+    console.log("Push cancelled.");
+    return;
+  }
+
   // Copy each file to gitstore
-  for (const file of localFiles) {
+  for (const change of changes) {
+    const file = change.file;
     // Ensure secure permissions on local file before pushing
     await ensureSecurePermissions(file);
 
@@ -439,37 +518,12 @@ export async function pushToGitstore(gitstoreUrl: string) {
       await mkdir(destDir, { recursive: true });
     }
 
-    let addedFile = 0;
-    let removedFile = 0;
-    try {
-      const leftPath = existsSync(destPath) ? destPath : getNullPath();
-      const diffNumstat = runGit(["diff", "--no-index", "--numstat", "--", leftPath, file], process.cwd());
-      const lines = diffNumstat.stdout
-        .trim()
-        .split("\n")
-        .filter(line => line)
-        .map(line => line.split("\t"))
-        .filter(parts => parts.length >= 2);
-
-      for (const parts of lines) {
-        addedFile += Number(parts[0]) || 0;
-        removedFile += Number(parts[1]) || 0;
-      }
-    } catch {
-      // Ignore diff errors
-    }
-
     await copyFile(file, destPath);
-    console.log(`→ ${formatLineDelta(file, addedFile, removedFile)}`);
+    console.log(`→ ${formatLineDelta(file, change.added, change.removed)}`);
   }
 
   // Commit and push
   try {
-    const hasChanges = await printGitstoreDiff(gitstorePath, projectPath);
-    if (!hasChanges) {
-      return;
-    }
-
     await execaCommand(`cd ${gitstorePath} && git add -A`, { shell: true });
 
     const gitRemote = await getGitRemote();
@@ -520,6 +574,13 @@ export async function pullFromGitstore(gitstoreUrl: string) {
   }
   if (addedTotal !== 0 || removedTotal !== 0) {
     console.log(`Lines: +${addedTotal} -${removedTotal}`);
+  }
+
+  // Ask for confirmation before writing files
+  const proceed = await confirmAction("Proceed with pull? [Y/n] ");
+  if (!proceed) {
+    console.log("Pull cancelled.");
+    return;
   }
 
   // Copy each file from gitstore to local
@@ -586,7 +647,7 @@ export async function syncWithGitstore(gitstoreUrl: string) {
       return;
     }
 
-    const proceed = await confirmSync();
+    const proceed = await confirmAction("Proceed with sync? [Y/n] ");
     if (!proceed) {
       console.log("Sync cancelled.");
       return;
