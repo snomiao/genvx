@@ -142,6 +142,7 @@ genvx --gitstore=git@github.com:company/envs.git sync
 - ⚠️ Never commit `.env*` files to your project repos
 - ✅ Your env files are stored in `.genvx/gitstore/{host}/{owner}/{repo}/` (or `node_modules/.genvx/gitstore/...` when `node_modules` exists)
 - 🔒 The gitstore should only be accessible to you/your team
+- 🔐 **Optional encryption**: You can use [git-crypt](https://github.com/AGWA/git-crypt) in your gitstore repository for an additional layer of encryption on top of private repo access
 
 ## File Structure
 
