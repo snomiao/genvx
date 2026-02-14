@@ -9,7 +9,7 @@ import {
   getProjectPath,
   pullFromGitstore,
   pushToGitstore,
-} from "./cli";
+} from "./index.js";
 
 process.env.GIT_AUTHOR_NAME ??= "genvx";
 process.env.GIT_AUTHOR_EMAIL ??= "genvx@example.com";
