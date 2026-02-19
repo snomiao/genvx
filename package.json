@@ -5,7 +5,10 @@
   },
   "version": "0.0.0",
   "bin": {
-    "genvx": "./cli.ts"
+    "genvx": "./src/cli.ts"
+  },
+  "scripts": {
+    "build": "bunx tsdown"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
