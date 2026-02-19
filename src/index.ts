@@ -112,10 +112,10 @@ export async function getGitstoreConfig(cliGitstore?: string): Promise<string | 
   }
 
   // Priority 2: Environment variables
-  config({ override: false, path: '.env.local' })
-  config({ override: false, path: '.env' })
-  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env.local') })
-  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env') })
+  config({ override: false, path: '.env.local', quiet: true })
+  config({ override: false, path: '.env', quiet: true })
+  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env.local'), quiet: true })
+  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env'), quiet: true })
   if (process.env.GENVX_STORE) {
     return process.env.GENVX_STORE;
   }
@@ -440,7 +440,7 @@ export async function findEnvFiles(pattern: string, searchPath: string = "."): P
 }
 
 // Push .env* files to gitstore
-export async function pushToGitstore(gitstoreUrl: string) {
+export async function pushToGitstore(gitstoreUrl: string, yes = false) {
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -481,7 +481,7 @@ export async function pushToGitstore(gitstoreUrl: string) {
   }
 
   // Ask for confirmation before writing files
-  const proceed = await confirmAction("Proceed with push? [Y/n] ");
+  const proceed = yes || await confirmAction("Proceed with push? [Y/n] ");
   if (!proceed) {
     console.log("Push cancelled.");
     return;
@@ -519,7 +519,7 @@ export async function pushToGitstore(gitstoreUrl: string) {
 }
 
 // Pull .env* files from gitstore
-export async function pullFromGitstore(gitstoreUrl: string) {
+export async function pullFromGitstore(gitstoreUrl: string, yes = false) {
 
   // Sync gitstore
   const gitstorePath = await syncGitstore(gitstoreUrl);
@@ -558,7 +558,7 @@ export async function pullFromGitstore(gitstoreUrl: string) {
   }
 
   // Ask for confirmation before writing files
-  const proceed = await confirmAction("Proceed with pull? [Y/n] ");
+  const proceed = yes || await confirmAction("Proceed with pull? [Y/n] ");
   if (!proceed) {
     console.log("Pull cancelled.");
     return;
@@ -578,6 +578,90 @@ export async function pullFromGitstore(gitstoreUrl: string) {
     await ensureSecurePermissions(destPath);
 
     console.log(`← ${formatLineDelta(change.file, change.added, change.removed)}`);
+  }
+}
+
+// Diff .env* files (dry run — shows what would change without modifying anything)
+function parseEnvKeys(content: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx < 0) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    if (key) map.set(key, trimmed.slice(eqIdx + 1));
+  }
+  return map;
+}
+
+function keyDiffSummary(oldContent: string, newContent: string): string {
+  const oldMap = parseEnvKeys(oldContent);
+  const newMap = parseEnvKeys(newContent);
+  const parts: string[] = [];
+  for (const key of newMap.keys()) {
+    if (!oldMap.has(key)) parts.push(`+${key}`);
+    else if (oldMap.get(key) !== newMap.get(key)) parts.push(`~${key}`);
+  }
+  for (const key of oldMap.keys()) {
+    if (!newMap.has(key)) parts.push(`-${key}`);
+  }
+  return parts.length ? `[${parts.join(', ')}]` : '';
+}
+
+async function readOrEmpty(filePath: string): Promise<string> {
+  return existsSync(filePath) ? readFile(filePath, 'utf-8') : Promise.resolve('');
+}
+
+export async function diffWithGitstore(gitstoreUrl: string) {
+  const gitstorePath = await syncGitstore(gitstoreUrl);
+  const projectPath = await getProjectPath(gitstorePath);
+
+  // Pull direction: what would come down from remote
+  if (existsSync(projectPath)) {
+    const remoteFiles = await findEnvFiles(".env*", projectPath);
+    const pullChanges = await getPullChanges(projectPath, remoteFiles);
+    if (pullChanges.length === 0) {
+      console.log("pull: (no changes)");
+    } else {
+      console.log("pull:");
+      for (const change of pullChanges) {
+        const remotePath = join(projectPath, change.file);
+        const [localContent, remoteContent] = await Promise.all([
+          readOrEmpty(change.file),
+          readOrEmpty(remotePath),
+        ]);
+        const keys = keyDiffSummary(localContent, remoteContent);
+        console.log(`  ← ${change.status} ${change.file}${keys ? ' ' + keys : ''}`);
+      }
+    }
+  } else {
+    console.log("pull: (no remote files found)");
+  }
+
+  // Push direction: what would go up to remote
+  const localFiles = await findEnvFiles(".env*");
+  if (localFiles.length === 0) {
+    console.log("push: (no local .env* files)");
+  } else {
+    if (!existsSync(projectPath)) {
+      await mkdir(projectPath, { recursive: true });
+    }
+    const pushChanges = await getPushChanges(projectPath, localFiles);
+    if (pushChanges.length === 0) {
+      console.log("push: (no changes)");
+    } else {
+      console.log("push:");
+      for (const change of pushChanges) {
+        const remotePath = join(projectPath, change.file);
+        const [localContent, remoteContent] = await Promise.all([
+          readOrEmpty(change.file),
+          readOrEmpty(remotePath),
+        ]);
+        const keys = keyDiffSummary(remoteContent, localContent);
+        console.log(`  → ${change.status} ${change.file}${keys ? ' ' + keys : ''}`);
+      }
+    }
   }
 }
 

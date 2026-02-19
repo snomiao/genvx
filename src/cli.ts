@@ -5,11 +5,40 @@ import {
   getGitstoreConfig,
   isInsideGitstoreDir,
   getGitRemote,
-  parseGitRemote,
   pushToGitstore,
   pullFromGitstore,
+  diffWithGitstore,
   cleanup
 } from "./index.js";
+
+async function guardGitstore(gitstore: string) {
+  const cwd = process.cwd();
+  if (isInsideGitstoreDir(cwd)) {
+    console.error("Error: Cannot run genvx inside the gitstore directory");
+    process.exit(1);
+  }
+  try {
+    const currentRemote = await getGitRemote();
+    const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
+    const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
+    if (normalizedCurrent === normalizedGitstore) {
+      console.error("Error: Cannot run genvx inside the gitstore repository itself");
+      process.exit(1);
+    }
+  } catch {
+    // Not in a git repo, that's fine
+  }
+}
+
+async function resolveGitstore(cliValue: string | undefined): Promise<string> {
+  const gitstore = await getGitstoreConfig(cliValue);
+  if (!gitstore) {
+    console.error("Error: GENVX_STORE not configured");
+    console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
+    process.exit(1);
+  }
+  return gitstore;
+}
 
 // Setup yargs CLI
 export function runCli() {
@@ -20,6 +49,12 @@ export function runCli() {
       alias: "g",
       type: "string",
       description: "Git repository URL for storing env files",
+    })
+    .option("yes", {
+      alias: "y",
+      type: "boolean",
+      description: "Skip confirmation prompts",
+      default: false,
     })
     .fail((msg, err, yargs) => {
       // Check if user typed "version" as a command
@@ -37,73 +72,13 @@ export function runCli() {
       }
     })
     .command(
-      ["sync", "s"],
-      "Pull then push .env* files",
-      () => { },
-      async (argv) => {
-        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-        if (!gitstore) {
-          console.error("Error: GENVX_STORE not configured");
-          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
-          process.exit(1);
-        }
-
-        // Check if we're inside gitstore
-        const cwd = process.cwd();
-        if (isInsideGitstoreDir(cwd)) {
-          console.error("Error: Cannot run genvx inside the gitstore directory");
-          process.exit(1);
-        }
-
-        try {
-          const currentRemote = await getGitRemote();
-          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-          if (normalizedCurrent === normalizedGitstore) {
-            console.error("Error: Cannot run genvx inside the gitstore repository itself");
-            process.exit(1);
-          }
-        } catch {
-          // Not in a git repo, that's fine
-        }
-
-        await pullFromGitstore(gitstore);
-        await pushToGitstore(gitstore);
-        await cleanup();
-      }
-    )
-    .command(
       ["push", "p", "save"],
       "Save .env* files to gitstore",
       () => { },
       async (argv) => {
-        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-        if (!gitstore) {
-          console.error("Error: GENVX_STORE not configured");
-          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
-          process.exit(1);
-        }
-
-        // Check if we're inside gitstore
-        const cwd = process.cwd();
-        if (isInsideGitstoreDir(cwd)) {
-          console.error("Error: Cannot run genvx inside the gitstore directory");
-          process.exit(1);
-        }
-
-        try {
-          const currentRemote = await getGitRemote();
-          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-          if (normalizedCurrent === normalizedGitstore) {
-            console.error("Error: Cannot run genvx inside the gitstore repository itself");
-            process.exit(1);
-          }
-        } catch {
-          // Not in a git repo, that's fine
-        }
-
-        await pushToGitstore(gitstore);
+        const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
+        await guardGitstore(gitstore);
+        await pushToGitstore(gitstore, argv.yes as boolean);
         await cleanup();
       }
     )
@@ -112,42 +87,29 @@ export function runCli() {
       "Load .env* files from gitstore",
       () => { },
       async (argv) => {
-        const gitstore = await getGitstoreConfig(argv.gitstore as string | undefined);
-        if (!gitstore) {
-          console.error("Error: GENVX_STORE not configured");
-          console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
-          process.exit(1);
-        }
-
-        // Check if we're inside gitstore
-        const cwd = process.cwd();
-        if (isInsideGitstoreDir(cwd)) {
-          console.error("Error: Cannot run genvx inside the gitstore directory");
-          process.exit(1);
-        }
-
-        try {
-          const currentRemote = await getGitRemote();
-          const normalizedCurrent = currentRemote.replace(/\.git$/, "").toLowerCase();
-          const normalizedGitstore = gitstore.replace(/\.git$/, "").toLowerCase();
-          if (normalizedCurrent === normalizedGitstore) {
-            console.error("Error: Cannot run genvx inside the gitstore repository itself");
-            process.exit(1);
-          }
-        } catch {
-          // Not in a git repo, that's fine
-        }
-
-        await pullFromGitstore(gitstore);
+        const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
+        await guardGitstore(gitstore);
+        await pullFromGitstore(gitstore, argv.yes as boolean);
         await cleanup();
       }
     )
-    .example("$0 save", "Save all .env* files to gitstore")
-    .example("$0 load", "Load all .env* files from gitstore")
-    .example("$0 sync", "Pull then push .env* files")
+    .command(
+      ["diff", "d"],
+      "Show pending .env* file changes (dry run)",
+      () => { },
+      async (argv) => {
+        const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
+        await guardGitstore(gitstore);
+        await diffWithGitstore(gitstore);
+        await cleanup();
+      }
+    )
     .example("$0 push", "Push all .env* files to gitstore")
+    .example("$0 push -y", "Push without confirmation prompt")
     .example("$0 pull", "Pull all .env* files from gitstore")
-    .example("$0 save --gitstore=https://github.com/user/secrets.git", "Save with specific gitstore")
+    .example("$0 pull -y", "Pull without confirmation prompt")
+    .example("$0 diff", "Show pending changes without modifying files")
+    .example("$0 push --gitstore=https://github.com/user/secrets.git", "Push with specific gitstore")
     .help()
     .alias("h", "help")
     .version()
