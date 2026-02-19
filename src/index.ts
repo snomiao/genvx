@@ -114,8 +114,8 @@ export async function getGitstoreConfig(cliGitstore?: string): Promise<string | 
   // Priority 2: Environment variables
   config({ override: false, path: '.env.local' })
   config({ override: false, path: '.env' })
-  config({ override: false, path: path.resolve(os.homedir(), '/.genvx/.env.local') })
-  config({ override: false, path: path.resolve(os.homedir(), '/.genvx/.env') })
+  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env.local') })
+  config({ override: false, path: path.resolve(os.homedir(), '.genvx/.env') })
   if (process.env.GENVX_STORE) {
     return process.env.GENVX_STORE;
   }
