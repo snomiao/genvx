@@ -394,9 +394,8 @@ async function getFileChangesWithEncryption(
           const encryptedContent = await readFile(remotePath, "utf-8");
           remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
         } catch {
-          // Can't decrypt, treat as new
-          const lines = localContent.split("\n").length;
-          return { status: "+", file, added: lines, removed: 0 };
+          console.error(`Error: Failed to decrypt remote ${file}. Wrong GENVX_KEY?`);
+          process.exit(1);
         }
       } else {
         remoteContent = await readFile(remotePath, "utf-8");
@@ -660,9 +659,9 @@ async function getPullChangesWithEncryption(
         try {
           const encryptedContent = await readFile(remotePath, "utf-8");
           remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
-        } catch {
-          console.error(`Warning: Failed to decrypt ${remoteFile}`);
-          return null;
+        } catch (err) {
+          console.error(`Error: Failed to decrypt ${remoteFile}. Wrong GENVX_KEY?`);
+          process.exit(1);
         }
       } else {
         remoteContent = await readFile(remotePath, "utf-8");
