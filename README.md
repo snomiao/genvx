@@ -140,27 +140,6 @@ genvx pull --no-encrypt
 
 Push and pull are one-way operations. Deletes are not propagated automatically.
 
-## Migration from v1
-
-If you have an existing v1 gitstore (directory-based structure), migrate to v2:
-
-```bash
-# Set your encryption key first
-export GENVX_KEY="your-secret-encryption-key"
-
-# Run migration
-genvx migrate
-
-# Or skip confirmation
-genvx migrate -y
-```
-
-This will:
-1. Find all projects in your v1 gitstore
-2. Create hashed branches for each project
-3. Encrypt and copy files to new branches
-4. Push all branches to remote
-
 ## How it works
 
 ### Encryption
@@ -240,7 +219,6 @@ genvx --gitstore=git@github.com:company/envs.git push
 | `pull` | `load` | Pull `.env*` files from gitstore (decrypted) |
 | `diff` | `d` | Show pending changes (dry run) |
 | `branch` | `b` | Show hashed branch name for this project |
-| `migrate` | - | Migrate from v1 to v2 format |
 
 ### Options
 

@@ -9,7 +9,6 @@ import {
   pushToGitstore,
   pullFromGitstore,
   diffWithGitstore,
-  migrateFromV1,
   cleanup
 } from "./index.js";
 
@@ -129,16 +128,6 @@ export function runCli() {
         }
       }
     )
-    .command(
-      "migrate",
-      "Migrate from v1 (directory-based) to v2 (branch-per-project with encryption)",
-      () => { },
-      async (argv) => {
-        const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
-        await migrateFromV1(gitstore, argv.yes as boolean);
-        await cleanup();
-      }
-    )
     .example("$0 push", "Push all .env* files to gitstore")
     .example("$0 push -y", "Push without confirmation prompt")
     .example("$0 pull", "Pull all .env* files from gitstore")
@@ -147,7 +136,6 @@ export function runCli() {
     .example("$0 push --gitstore=https://github.com/user/secrets.git", "Push with specific gitstore")
     .example("$0 branch", "Show hashed branch name for this project")
     .example("$0 push --no-encrypt", "Push without encryption (not recommended)")
-    .example("$0 migrate", "Migrate from v1 to v2 format")
     .help()
     .alias("h", "help")
     .version()
