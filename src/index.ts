@@ -3,7 +3,7 @@ import { readFile, writeFile, copyFile, mkdir, rm, chmod } from "fs/promises";
 import { join, resolve, sep, dirname } from "path";
 import { platform, homedir } from "os";
 import { createInterface } from "readline/promises";
-import { createHash } from "crypto";
+import { createHash, scryptSync, randomBytes, createCipheriv, createDecipheriv } from "crypto";
 
 // Types
 type Change = { status: string; file: string; added: number; removed: number };
@@ -109,6 +109,57 @@ export async function getGitRemote(): Promise<string> {
   } catch {
     throw new Error("Not in a git repository or no remote origin found");
   }
+}
+
+// Encryption utilities (AES-256-GCM)
+const ENCRYPTION_ALGORITHM = "aes-256-gcm";
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+const SCRYPT_KEYLEN = 32;
+
+function deriveKey(masterKey: string, salt: string): Buffer {
+  return scryptSync(masterKey, salt, SCRYPT_KEYLEN);
+}
+
+export function encrypt(content: string, masterKey: string, projectId: string): string {
+  const key = deriveKey(masterKey, projectId);
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+
+  const encrypted = Buffer.concat([cipher.update(content, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  // Format: iv:authTag:ciphertext (all hex)
+  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+export function decrypt(encryptedContent: string, masterKey: string, projectId: string): string {
+  const [ivHex, authTagHex, ciphertextHex] = encryptedContent.split(":");
+  if (!ivHex || !authTagHex || !ciphertextHex) {
+    throw new Error("Invalid encrypted format");
+  }
+
+  const key = deriveKey(masterKey, projectId);
+  const iv = Buffer.from(ivHex, "hex");
+  const authTag = Buffer.from(authTagHex, "hex");
+  const ciphertext = Buffer.from(ciphertextHex, "hex");
+
+  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
+  return decipher.update(ciphertext) + decipher.final("utf8");
+}
+
+// Get encryption key from config
+export async function getEncryptionKey(): Promise<string | null> {
+  await loadEnvConfig();
+  return process.env.GENVX_KEY ?? null;
+}
+
+// Get project identifier for key derivation
+export function getProjectId(gitRemote: string): string {
+  const { host, owner, repo } = parseGitRemote(gitRemote);
+  return `${host}/${owner}/${repo}`.toLowerCase();
 }
 
 // Load env config from multiple sources (Bun auto-loads .env, but we need specific paths)
@@ -312,36 +363,194 @@ async function displayAndConfirm(
   return yes || await confirmAction(`Proceed with ${action}? [Y/n] `);
 }
 
+// Get file changes with encryption support
+async function getFileChangesWithEncryption(
+  projectPath: string,
+  files: string[],
+  direction: Direction,
+  encryptionKey: string | null,
+  projectId: string
+): Promise<Change[]> {
+  const changes = await Promise.all(
+    files.map(async (file): Promise<Change | null> => {
+      const localPath = file;
+      const remoteFile = encryptionKey ? `${file}.enc` : file;
+      const remotePath = join(projectPath, remoteFile);
+      const remoteExists = existsSync(remotePath);
+
+      if (!remoteExists) {
+        // New file
+        const content = await readFile(localPath, "utf-8");
+        const lines = content.split("\n").length;
+        return { status: "+", file, added: lines, removed: 0 };
+      }
+
+      // Compare content (decrypt remote if encrypted)
+      const localContent = await readFile(localPath, "utf-8");
+      let remoteContent: string;
+
+      if (encryptionKey) {
+        try {
+          const encryptedContent = await readFile(remotePath, "utf-8");
+          remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+        } catch {
+          // Can't decrypt, treat as new
+          const lines = localContent.split("\n").length;
+          return { status: "+", file, added: lines, removed: 0 };
+        }
+      } else {
+        remoteContent = await readFile(remotePath, "utf-8");
+      }
+
+      if (localContent === remoteContent) return null;
+
+      // Calculate diff
+      const localLines = localContent.split("\n");
+      const remoteLines = remoteContent.split("\n");
+      const added = localLines.filter(l => !remoteLines.includes(l)).length;
+      const removed = remoteLines.filter(l => !localLines.includes(l)).length;
+
+      return { status: "M", file, added, removed };
+    })
+  );
+
+  return changes.filter((c): c is Change => c !== null);
+}
+
+// Display changes for encrypted files
+async function displayAndConfirmEncrypted(
+  changes: Change[],
+  projectPath: string,
+  direction: Direction,
+  yes: boolean,
+  encryptionKey: string | null,
+  projectId: string
+): Promise<boolean> {
+  const action = direction;
+  const arrow = direction === "push" ? "→" : "←";
+
+  console.log("Pending env file changes:");
+  for (const c of changes) {
+    console.log(`${arrow} ${c.status} ${formatLineDelta(c.file, c.added, c.removed)}`);
+    if (c.status === "M") {
+      // Show diff between local and decrypted remote
+      const localPath = c.file;
+      const remoteFile = encryptionKey ? `${c.file}.enc` : c.file;
+      const remotePath = join(projectPath, remoteFile);
+
+      if (existsSync(remotePath)) {
+        let remoteContent: string;
+        if (encryptionKey) {
+          try {
+            const encryptedContent = await readFile(remotePath, "utf-8");
+            remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+          } catch {
+            continue;
+          }
+        } else {
+          remoteContent = await readFile(remotePath, "utf-8");
+        }
+
+        const localContent = await readFile(localPath, "utf-8");
+        const diff = getContentDiff(remoteContent, localContent);
+        if (diff) console.log(diff);
+      }
+    }
+  }
+
+  const { added, removed } = sumChanges(changes);
+  if (added !== 0 || removed !== 0) {
+    console.log(`Lines: +${added} -${removed}`);
+  }
+
+  return yes || await confirmAction(`Proceed with ${action}? [Y/n] `);
+}
+
+// Get diff between two content strings
+function getContentDiff(oldContent: string, newContent: string): string {
+  const genvxDir = getGenvxDir();
+  const tmpOld = join(genvxDir, "tmp_old");
+  const tmpNew = join(genvxDir, "tmp_new");
+
+  try {
+    Bun.spawnSync({ cmd: ["mkdir", "-p", genvxDir] });
+    require("fs").writeFileSync(tmpOld, oldContent);
+    require("fs").writeFileSync(tmpNew, newContent);
+
+    const result = Bun.spawnSync({
+      cmd: ["git", "diff", "--no-index", "--color=always", "--", tmpOld, tmpNew],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (!result.stdout) return "";
+
+    return new TextDecoder().decode(result.stdout)
+      .split("\n")
+      .filter(line => !line.match(/^(\x1b\[\d+m)*(diff|index|---|\+\+\+) /))
+      .join("\n")
+      .trim();
+  } finally {
+    try {
+      require("fs").unlinkSync(tmpOld);
+      require("fs").unlinkSync(tmpNew);
+    } catch { /* ignore */ }
+  }
+}
+
 // Push .env* files to gitstore
-export async function pushToGitstore(gitstoreUrl: string, yes = false) {
+export async function pushToGitstore(gitstoreUrl: string, yes = false, useEncryption = true) {
   const gitRemote = await getGitRemote();
   const branch = getBranchName(gitRemote);
+  const projectId = getProjectId(gitRemote);
   const gitstorePath = await syncGitstore(gitstoreUrl, branch);
   const projectPath = getProjectPath(gitstorePath);
   await ensureDir(projectPath);
 
+  // Get encryption key if encryption is enabled
+  let encryptionKey: string | null = null;
+  if (useEncryption) {
+    encryptionKey = await getEncryptionKey();
+    if (!encryptionKey) {
+      console.error("Error: GENVX_KEY not set. Set it to enable encryption, or use --no-encrypt.");
+      process.exit(1);
+    }
+  }
+
   const localFiles = await findEnvFiles(".env*");
   if (localFiles.length === 0) return;
 
-  const changes = await getFileChanges(projectPath, localFiles, "push");
+  // For encrypted mode, compare against decrypted remote content
+  const changes = await getFileChangesWithEncryption(
+    projectPath, localFiles, "push", encryptionKey, projectId
+  );
+
   if (changes.length === 0) {
     localFiles.forEach(file => console.log(`→ ${formatLineDelta(file, 0, 0)}`));
     console.log(".");
     return;
   }
 
-  if (!await displayAndConfirm(changes, projectPath, "push", yes)) {
+  if (!await displayAndConfirmEncrypted(changes, projectPath, "push", yes, encryptionKey, projectId)) {
     console.log("Push cancelled.");
     return;
   }
 
-  // Copy files
+  // Copy files (encrypt if enabled)
   for (const { file, added, removed } of changes) {
     await ensureSecurePermissions(file);
-    const destPath = join(projectPath, file);
+    const content = await readFile(file, "utf-8");
+    const destFile = encryptionKey ? `${file}.enc` : file;
+    const destPath = join(projectPath, destFile);
     await ensureDir(dirname(destPath));
-    await copyFile(file, destPath);
-    console.log(`→ ${formatLineDelta(file, added, removed)}`);
+
+    if (encryptionKey) {
+      const encrypted = encrypt(content, encryptionKey, projectId);
+      await writeFile(destPath, encrypted);
+    } else {
+      await copyFile(file, destPath);
+    }
+    console.log(`→ ${formatLineDelta(file, added, removed)}${encryptionKey ? " (encrypted)" : ""}`);
   }
 
   // Commit and push to branch
@@ -355,38 +564,175 @@ export async function pushToGitstore(gitstoreUrl: string, yes = false) {
 }
 
 // Pull .env* files from gitstore
-export async function pullFromGitstore(gitstoreUrl: string, yes = false) {
+export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncryption = true) {
   const gitRemote = await getGitRemote();
   const branch = getBranchName(gitRemote);
+  const projectId = getProjectId(gitRemote);
   const gitstorePath = await syncGitstore(gitstoreUrl, branch);
   const projectPath = getProjectPath(gitstorePath);
 
-  const remoteFiles = await findEnvFiles(".env*", projectPath);
-  if (remoteFiles.length === 0) {
+  // Get encryption key if encryption is enabled
+  let encryptionKey: string | null = null;
+  if (useEncryption) {
+    encryptionKey = await getEncryptionKey();
+    if (!encryptionKey) {
+      console.error("Error: GENVX_KEY not set. Set it to enable decryption, or use --no-encrypt.");
+      process.exit(1);
+    }
+  }
+
+  // Find remote files (encrypted or plain)
+  const allRemoteFiles = await findEnvFiles(".env*", projectPath);
+  const encryptedFiles = allRemoteFiles.filter(f => f.endsWith(".enc"));
+  const plainFiles = allRemoteFiles.filter(f => !f.endsWith(".enc"));
+
+  // Determine which files to use based on encryption mode
+  let remoteFiles: string[];
+  let isEncrypted: boolean;
+
+  if (encryptionKey && encryptedFiles.length > 0) {
+    // Use encrypted files, strip .enc suffix for local names
+    remoteFiles = encryptedFiles;
+    isEncrypted = true;
+  } else if (plainFiles.length > 0) {
+    remoteFiles = plainFiles;
+    isEncrypted = false;
+  } else {
     console.log("No env files found in gitstore for this project.");
     return;
   }
 
-  const changes = await getFileChanges(projectPath, remoteFiles, "pull");
+  // Get changes
+  const changes = await getPullChangesWithEncryption(
+    projectPath, remoteFiles, encryptionKey, projectId, isEncrypted
+  );
+
   if (changes.length === 0) {
-    remoteFiles.forEach(file => console.log(`← ${formatLineDelta(file, 0, 0)}`));
+    const displayFiles = isEncrypted
+      ? remoteFiles.map(f => f.replace(/\.enc$/, ""))
+      : remoteFiles;
+    displayFiles.forEach(file => console.log(`← ${formatLineDelta(file, 0, 0)}`));
     console.log(".");
     return;
   }
 
-  if (!await displayAndConfirm(changes, projectPath, "pull", yes)) {
+  if (!await displayAndConfirmPullEncrypted(changes, projectPath, "pull", yes, encryptionKey, projectId, isEncrypted)) {
     console.log("Pull cancelled.");
     return;
   }
 
-  // Copy files
+  // Copy files (decrypt if needed)
   for (const { file, added, removed } of changes) {
-    const sourcePath = join(projectPath, file);
+    const remoteFile = isEncrypted ? `${file}.enc` : file;
+    const remotePath = join(projectPath, remoteFile);
     await ensureDir(dirname(file));
-    await copyFile(sourcePath, file);
+
+    if (isEncrypted && encryptionKey) {
+      const encryptedContent = await readFile(remotePath, "utf-8");
+      const decrypted = decrypt(encryptedContent, encryptionKey, projectId);
+      await writeFile(file, decrypted);
+    } else {
+      await copyFile(remotePath, file);
+    }
+
     await ensureSecurePermissions(file);
-    console.log(`← ${formatLineDelta(file, added, removed)}`);
+    console.log(`← ${formatLineDelta(file, added, removed)}${isEncrypted ? " (decrypted)" : ""}`);
   }
+}
+
+// Get pull changes with encryption support
+async function getPullChangesWithEncryption(
+  projectPath: string,
+  remoteFiles: string[],
+  encryptionKey: string | null,
+  projectId: string,
+  isEncrypted: boolean
+): Promise<Change[]> {
+  const changes = await Promise.all(
+    remoteFiles.map(async (remoteFile): Promise<Change | null> => {
+      const localFile = isEncrypted ? remoteFile.replace(/\.enc$/, "") : remoteFile;
+      const remotePath = join(projectPath, remoteFile);
+      const localExists = existsSync(localFile);
+
+      // Get remote content (decrypt if needed)
+      let remoteContent: string;
+      if (isEncrypted && encryptionKey) {
+        try {
+          const encryptedContent = await readFile(remotePath, "utf-8");
+          remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+        } catch {
+          console.error(`Warning: Failed to decrypt ${remoteFile}`);
+          return null;
+        }
+      } else {
+        remoteContent = await readFile(remotePath, "utf-8");
+      }
+
+      if (!localExists) {
+        const lines = remoteContent.split("\n").length;
+        return { status: "+", file: localFile, added: lines, removed: 0 };
+      }
+
+      const localContent = await readFile(localFile, "utf-8");
+      if (localContent === remoteContent) return null;
+
+      const localLines = localContent.split("\n");
+      const remoteLines = remoteContent.split("\n");
+      const added = remoteLines.filter(l => !localLines.includes(l)).length;
+      const removed = localLines.filter(l => !remoteLines.includes(l)).length;
+
+      return { status: "M", file: localFile, added, removed };
+    })
+  );
+
+  return changes.filter((c): c is Change => c !== null);
+}
+
+// Display pull changes for encrypted files
+async function displayAndConfirmPullEncrypted(
+  changes: Change[],
+  projectPath: string,
+  direction: Direction,
+  yes: boolean,
+  encryptionKey: string | null,
+  projectId: string,
+  isEncrypted: boolean
+): Promise<boolean> {
+  const arrow = "←";
+
+  console.log("Pending env file changes:");
+  for (const c of changes) {
+    console.log(`${arrow} ${c.status} ${formatLineDelta(c.file, c.added, c.removed)}`);
+    if (c.status === "M") {
+      const remoteFile = isEncrypted ? `${c.file}.enc` : c.file;
+      const remotePath = join(projectPath, remoteFile);
+
+      if (existsSync(remotePath) && existsSync(c.file)) {
+        let remoteContent: string;
+        if (isEncrypted && encryptionKey) {
+          try {
+            const encryptedContent = await readFile(remotePath, "utf-8");
+            remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+          } catch {
+            continue;
+          }
+        } else {
+          remoteContent = await readFile(remotePath, "utf-8");
+        }
+
+        const localContent = await readFile(c.file, "utf-8");
+        const diff = getContentDiff(localContent, remoteContent);
+        if (diff) console.log(diff);
+      }
+    }
+  }
+
+  const { added, removed } = sumChanges(changes);
+  if (added !== 0 || removed !== 0) {
+    console.log(`Lines: +${added} -${removed}`);
+  }
+
+  return yes || await confirmAction(`Proceed with pull? [Y/n] `);
 }
 
 // Get git diff between two files (simplified output)
@@ -408,28 +754,74 @@ const getFileDiff = (oldPath: string, newPath: string): string => {
 };
 
 // Diff .env* files (dry run)
-export async function diffWithGitstore(gitstoreUrl: string) {
+export async function diffWithGitstore(gitstoreUrl: string, useEncryption = true) {
   const gitRemote = await getGitRemote();
   const branch = getBranchName(gitRemote);
+  const projectId = getProjectId(gitRemote);
   const gitstorePath = await syncGitstore(gitstoreUrl, branch);
   const projectPath = getProjectPath(gitstorePath);
 
+  // Get encryption key if encryption is enabled
+  let encryptionKey: string | null = null;
+  if (useEncryption) {
+    encryptionKey = await getEncryptionKey();
+    if (!encryptionKey) {
+      console.error("Error: GENVX_KEY not set. Set it to enable encryption, or use --no-encrypt.");
+      process.exit(1);
+    }
+  }
+
   // Pull direction
-  const remoteFiles = await findEnvFiles(".env*", projectPath);
+  const allRemoteFiles = await findEnvFiles(".env*", projectPath);
+  const encryptedFiles = allRemoteFiles.filter(f => f.endsWith(".enc"));
+  const plainFiles = allRemoteFiles.filter(f => !f.endsWith(".enc"));
+
+  let remoteFiles: string[];
+  let isEncrypted: boolean;
+
+  if (encryptionKey && encryptedFiles.length > 0) {
+    remoteFiles = encryptedFiles;
+    isEncrypted = true;
+  } else if (plainFiles.length > 0) {
+    remoteFiles = plainFiles;
+    isEncrypted = false;
+  } else {
+    remoteFiles = [];
+    isEncrypted = false;
+  }
+
   if (remoteFiles.length === 0) {
     console.log("pull: (no remote files found)");
   } else {
-    const pullChanges = await getFileChanges(projectPath, remoteFiles, "pull");
+    const pullChanges = await getPullChangesWithEncryption(
+      projectPath, remoteFiles, encryptionKey, projectId, isEncrypted
+    );
     if (pullChanges.length === 0) {
       console.log("pull: (no changes)");
     } else {
       console.log("pull:");
       for (const change of pullChanges) {
-        const remotePath = join(projectPath, change.file);
         console.log(`  ← ${change.status} ${change.file}`);
         if (change.status === "M") {
-          const diff = getFileDiff(change.file, remotePath);
-          if (diff) console.log(diff);
+          const remoteFile = isEncrypted ? `${change.file}.enc` : change.file;
+          const remotePath = join(projectPath, remoteFile);
+
+          if (existsSync(remotePath) && existsSync(change.file)) {
+            let remoteContent: string;
+            if (isEncrypted && encryptionKey) {
+              try {
+                const encryptedContent = await readFile(remotePath, "utf-8");
+                remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+              } catch {
+                continue;
+              }
+            } else {
+              remoteContent = await readFile(remotePath, "utf-8");
+            }
+            const localContent = await readFile(change.file, "utf-8");
+            const diff = getContentDiff(localContent, remoteContent);
+            if (diff) console.log(diff);
+          }
         }
       }
     }
@@ -443,18 +835,36 @@ export async function diffWithGitstore(gitstoreUrl: string) {
   }
 
   await ensureDir(projectPath);
-  const pushChanges = await getFileChanges(projectPath, localFiles, "push");
+  const pushChanges = await getFileChangesWithEncryption(
+    projectPath, localFiles, "push", encryptionKey, projectId
+  );
 
   if (pushChanges.length === 0) {
     console.log("push: (no changes)");
   } else {
     console.log("push:");
     for (const change of pushChanges) {
-      const remotePath = join(projectPath, change.file);
       console.log(`  → ${change.status} ${change.file}`);
       if (change.status === "M") {
-        const diff = getFileDiff(remotePath, change.file);
-        if (diff) console.log(diff);
+        const remoteFile = encryptionKey ? `${change.file}.enc` : change.file;
+        const remotePath = join(projectPath, remoteFile);
+
+        if (existsSync(remotePath)) {
+          let remoteContent: string;
+          if (encryptionKey) {
+            try {
+              const encryptedContent = await readFile(remotePath, "utf-8");
+              remoteContent = decrypt(encryptedContent, encryptionKey, projectId);
+            } catch {
+              continue;
+            }
+          } else {
+            remoteContent = await readFile(remotePath, "utf-8");
+          }
+          const localContent = await readFile(change.file, "utf-8");
+          const diff = getContentDiff(remoteContent, localContent);
+          if (diff) console.log(diff);
+        }
       }
     }
   }
@@ -468,4 +878,122 @@ export async function cleanup() {
       await rm(genvxDir, { recursive: true, force: true });
     } catch { /* silent */ }
   }
+}
+
+// Migrate from v1 (single branch with directories) to v2 (branch-per-project with encryption)
+export async function migrateFromV1(gitstoreUrl: string, yes = false) {
+  const genvxDir = await setupGenvxDir();
+  const v1Path = join(genvxDir, "v1-gitstore");
+  const encryptionKey = await getEncryptionKey();
+
+  if (!encryptionKey) {
+    console.error("Error: GENVX_KEY not set. Migration requires encryption key.");
+    process.exit(1);
+  }
+
+  console.log("Cloning v1 gitstore...");
+
+  // Clone the old v1 gitstore (main/master branch)
+  const cloneResult = await Bun.$`git clone --depth 1 -q ${gitstoreUrl} ${v1Path}`.quiet().nothrow();
+  if (cloneResult.exitCode !== 0) {
+    console.error("Failed to clone gitstore. Is it a valid git repository?");
+    process.exit(1);
+  }
+
+  // Find all project directories (host/owner/repo structure)
+  const projects: { host: string; owner: string; repo: string; path: string }[] = [];
+
+  const hosts = readdirSync(v1Path).filter(f => {
+    const p = join(v1Path, f);
+    return statSync(p).isDirectory() && !f.startsWith(".") && f.includes(".");
+  });
+
+  for (const host of hosts) {
+    const hostPath = join(v1Path, host);
+    const owners = readdirSync(hostPath).filter(f => {
+      const p = join(hostPath, f);
+      return statSync(p).isDirectory();
+    });
+
+    for (const owner of owners) {
+      const ownerPath = join(hostPath, owner);
+      const repos = readdirSync(ownerPath).filter(f => {
+        const p = join(ownerPath, f);
+        return statSync(p).isDirectory();
+      });
+
+      for (const repo of repos) {
+        const repoPath = join(ownerPath, repo);
+        const envFiles = await findEnvFiles(".env*", repoPath);
+        if (envFiles.length > 0) {
+          projects.push({ host, owner, repo, path: repoPath });
+        }
+      }
+    }
+  }
+
+  if (projects.length === 0) {
+    console.log("No projects found in v1 gitstore.");
+    return;
+  }
+
+  console.log(`Found ${projects.length} project(s) to migrate:`);
+  for (const p of projects) {
+    const envFiles = await findEnvFiles(".env*", p.path);
+    console.log(`  ${p.host}/${p.owner}/${p.repo} (${envFiles.length} env files)`);
+  }
+
+  if (!yes) {
+    const confirmed = await confirmAction("\nProceed with migration? [Y/n] ");
+    if (!confirmed) {
+      console.log("Migration cancelled.");
+      return;
+    }
+  }
+
+  // Migrate each project
+  for (const project of projects) {
+    const gitRemote = `https://${project.host}/${project.owner}/${project.repo}`;
+    const branch = getBranchName(gitRemote);
+    const projectId = getProjectId(gitRemote);
+
+    console.log(`\nMigrating ${project.host}/${project.owner}/${project.repo}...`);
+    console.log(`  Branch: ${branch}`);
+
+    // Create a new temp directory for this project's branch
+    const projectGitPath = join(genvxDir, `migrate-${branch.replace("/", "-")}`);
+
+    // Initialize new orphan branch
+    await mkdir(projectGitPath, { recursive: true });
+    await Bun.$`git -C ${projectGitPath} init -q`.quiet();
+    await Bun.$`git -C ${projectGitPath} remote add origin ${gitstoreUrl}`.quiet();
+    await Bun.$`git -C ${projectGitPath} checkout --orphan ${branch}`.quiet();
+
+    // Copy and encrypt files
+    const envFiles = await findEnvFiles(".env*", project.path);
+    for (const file of envFiles) {
+      const sourcePath = join(project.path, file);
+      const content = await readFile(sourcePath, "utf-8");
+      const encrypted = encrypt(content, encryptionKey, projectId);
+      const destPath = join(projectGitPath, `${file}.enc`);
+
+      await ensureDir(dirname(destPath));
+      await writeFile(destPath, encrypted);
+      console.log(`  → ${file} (encrypted)`);
+    }
+
+    // Commit and push
+    await Bun.$`git -C ${projectGitPath} add -A`.quiet();
+    await Bun.$`git -C ${projectGitPath} commit -m "Migrate from v1"`.quiet();
+
+    const pushResult = await Bun.$`git -C ${projectGitPath} push -u origin ${branch} -q`.quiet().nothrow();
+    if (pushResult.exitCode !== 0) {
+      console.error(`  Failed to push branch ${branch}`);
+    } else {
+      console.log(`  Pushed to ${branch}`);
+    }
+  }
+
+  console.log("\nMigration complete!");
+  console.log("You can now use genvx push/pull with the new branch-per-project structure.");
 }

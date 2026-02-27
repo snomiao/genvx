@@ -9,6 +9,7 @@ import {
   pushToGitstore,
   pullFromGitstore,
   diffWithGitstore,
+  migrateFromV1,
   cleanup
 } from "./index.js";
 
@@ -57,6 +58,11 @@ export function runCli() {
       description: "Skip confirmation prompts",
       default: false,
     })
+    .option("no-encrypt", {
+      type: "boolean",
+      description: "Disable encryption (not recommended)",
+      default: false,
+    })
     .fail((msg, err, yargs) => {
       // Check if user typed "version" as a command
       const firstArg = process.argv[2];
@@ -74,23 +80,25 @@ export function runCli() {
     })
     .command(
       ["push", "p", "save"],
-      "Save .env* files to gitstore",
+      "Save .env* files to gitstore (encrypted by default)",
       () => { },
       async (argv) => {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
-        await pushToGitstore(gitstore, argv.yes as boolean);
+        const useEncryption = !(argv["no-encrypt"] as boolean);
+        await pushToGitstore(gitstore, argv.yes as boolean, useEncryption);
         await cleanup();
       }
     )
     .command(
       ["pull", "load"],
-      "Load .env* files from gitstore",
+      "Load .env* files from gitstore (decrypts if encrypted)",
       () => { },
       async (argv) => {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
-        await pullFromGitstore(gitstore, argv.yes as boolean);
+        const useEncryption = !(argv["no-encrypt"] as boolean);
+        await pullFromGitstore(gitstore, argv.yes as boolean, useEncryption);
         await cleanup();
       }
     )
@@ -101,7 +109,8 @@ export function runCli() {
       async (argv) => {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
-        await diffWithGitstore(gitstore);
+        const useEncryption = !(argv["no-encrypt"] as boolean);
+        await diffWithGitstore(gitstore, useEncryption);
         await cleanup();
       }
     )
@@ -120,6 +129,16 @@ export function runCli() {
         }
       }
     )
+    .command(
+      "migrate",
+      "Migrate from v1 (directory-based) to v2 (branch-per-project with encryption)",
+      () => { },
+      async (argv) => {
+        const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
+        await migrateFromV1(gitstore, argv.yes as boolean);
+        await cleanup();
+      }
+    )
     .example("$0 push", "Push all .env* files to gitstore")
     .example("$0 push -y", "Push without confirmation prompt")
     .example("$0 pull", "Pull all .env* files from gitstore")
@@ -127,6 +146,8 @@ export function runCli() {
     .example("$0 diff", "Show pending changes without modifying files")
     .example("$0 push --gitstore=https://github.com/user/secrets.git", "Push with specific gitstore")
     .example("$0 branch", "Show hashed branch name for this project")
+    .example("$0 push --no-encrypt", "Push without encryption (not recommended)")
+    .example("$0 migrate", "Migrate from v1 to v2 format")
     .help()
     .alias("h", "help")
     .version()
