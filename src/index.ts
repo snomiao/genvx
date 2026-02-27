@@ -512,7 +512,7 @@ export async function pushToGitstore(gitstoreUrl: string, yes = false, useEncryp
   if (useEncryption) {
     encryptionKey = await getEncryptionKey();
     if (!encryptionKey) {
-      console.error("Error: GENVX_KEY not set. Set it to enable encryption, or use --no-encrypt.");
+      console.error("Error: GENVX_KEY not set. Add it to ~/.genvx/.env.local or use --no-encrypt.");
       process.exit(1);
     }
   }
@@ -576,7 +576,7 @@ export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncr
   if (useEncryption) {
     encryptionKey = await getEncryptionKey();
     if (!encryptionKey) {
-      console.error("Error: GENVX_KEY not set. Set it to enable decryption, or use --no-encrypt.");
+      console.error("Error: GENVX_KEY not set. Add it to ~/.genvx/.env.local or use --no-encrypt.");
       process.exit(1);
     }
   }
@@ -766,7 +766,7 @@ export async function diffWithGitstore(gitstoreUrl: string, useEncryption = true
   if (useEncryption) {
     encryptionKey = await getEncryptionKey();
     if (!encryptionKey) {
-      console.error("Error: GENVX_KEY not set. Set it to enable encryption, or use --no-encrypt.");
+      console.error("Error: GENVX_KEY not set. Add it to ~/.genvx/.env.local or use --no-encrypt.");
       process.exit(1);
     }
   }
@@ -887,7 +887,7 @@ export async function migrateFromV1(gitstoreUrl: string, yes = false) {
   const encryptionKey = await getEncryptionKey();
 
   if (!encryptionKey) {
-    console.error("Error: GENVX_KEY not set. Migration requires encryption key.");
+    console.error("Error: GENVX_KEY not set. Add it to ~/.genvx/.env.local for migration.");
     process.exit(1);
   }
 

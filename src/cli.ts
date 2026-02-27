@@ -36,7 +36,7 @@ async function resolveGitstore(cliValue: string | undefined): Promise<string> {
   const gitstore = await getGitstoreConfig(cliValue);
   if (!gitstore) {
     console.error("Error: GENVX_STORE not configured");
-    console.error("Set it via --gitstore flag, GENVX_STORE env var, or in .env.local");
+    console.error("Set it via --gitstore flag, GENVX_STORE env var, or in ~/.genvx/.env.local");
     process.exit(1);
   }
   return gitstore;
