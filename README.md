@@ -4,17 +4,18 @@ A simple CLI tool to save and load `.env*` files across projects using a private
 
 ## Features
 
-- ⬆️⬇️ **Explicit transfer** - Push, pull, or sync `.env*` files
+- ⬆️⬇️ **Explicit transfer** - Push or pull `.env*` files
+- 🔒 **Branch isolation** - Each project gets its own hashed branch (no cross-project exposure)
 - ☁️ **Private gitstore** - Store env files in a private git repository
-- 📁 **Organized storage** - Files stored by `{host}/{owner}/{repo}` structure
-- 🚀 **Simple** - No encryption, just git + file sync
+- 🚀 **Simple** - No encryption overhead, just git + file sync
 - 🧹 **Clean** - Temporary `.genvx` folder is auto-cleaned after operations
 
 ## Why?
 
 - Share env files across your machines easily
 - Backup sensitive env files securely in a private repo
-- No need for local `.env.*.encrypted` files
+- **Minimal clone** - Only downloads your project's env files, not everyone's
+- **Obscure branches** - Branch names are SHA256 hashes, hiding which project they belong to
 - Simpler than encryption-based solutions (just use a private repo!)
 
 ## Installation
@@ -75,8 +76,8 @@ genvx push
 # Or use short alias
 genvx p
 
-# Or use save alias
-genvx save
+# Push without confirmation prompt
+genvx push -y
 ```
 
 ### Load env files from gitstore
@@ -87,38 +88,59 @@ genvx pull
 
 # Or use load alias
 genvx load
+
+# Pull without confirmation prompt
+genvx pull -y
+```
+
+### Preview changes (dry run)
+
+```bash
+# Show what would be pushed/pulled
+genvx diff
+```
+
+### Show branch name
+
+```bash
+# Show the hashed branch name for this project
+genvx branch
+# Output: env/27b8a763f3dc97f1
 ```
 
 Push and pull are one-way operations. Deletes are not propagated automatically.
 
 ## How it works
 
-### Gitstore Structure
+### Branch-per-Project Architecture
 
-Your private gitstore repository will be organized like this:
+Each project gets its own isolated branch in your gitstore:
 
 ```
 gitstore-repo/
-├── github.com/
-│   ├── snomiao/
-│   │   ├── project1/
-│   │   │   ├── .env.prod.local
-│   │   │   └── .env.dev.local
-│   │   └── project2/
-│   │       └── .env.prod.local
-│   └── otheruser/
-│       └── project3/
-│           └── .env.local
-└── gitlab.com/
-    └── ...
+├── branch: env/27b8a763f3dc97f1  →  project1's .env files
+├── branch: env/9f2c4a8b1e3d7650  →  project2's .env files
+└── branch: env/a1b2c3d4e5f67890  →  project3's .env files
 ```
+
+- Branch names are SHA256 hashes of `{host}/{owner}/{repo}`
+- Each branch is an **orphan branch** (no shared history)
+- Cloning only fetches the single branch you need
 
 ### Workflow
 
-1. **Clone/Pull**: genvx clones your gitstore to `./node_modules/.genvx/gitstore` (temporary)
-2. **Transfer Files**: Copies `.env*` files to/from `{host}/{owner}/{repo}/` path
-3. **Commit/Push**: Commits and pushes changes to gitstore
-4. **Cleanup**: Removes `./node_modules/.genvx` directory
+1. **Clone Branch**: `git clone --single-branch --depth 1 -b env/<hash>` (minimal data)
+2. **Transfer Files**: Copies `.env*` files to/from branch root
+3. **Commit/Push**: Commits and pushes changes to the branch
+4. **Cleanup**: Removes temporary `.genvx` directory
+
+### Benefits
+
+| Old (single branch) | New (branch-per-project) |
+|---------------------|--------------------------|
+| Clone ALL projects' env files | Clone only YOUR project's files |
+| ~100KB+ clone (grows forever) | ~1KB clone (just env files) |
+| Other projects visible | Branches are hashed, obscure |
 
 ## Examples
 
@@ -132,69 +154,45 @@ genvx push
 # On another machine, pull them
 genvx pull
 
-# Use CLI flag to override
-genvx --gitstore=git@github.com:company/envs.git sync
+# Check which branch this project uses
+genvx branch
+
+# Use CLI flag to override gitstore
+genvx --gitstore=git@github.com:company/envs.git push
 ```
 
 ## Security Notes
 
 - ⚠️ **Use a private repository** for your gitstore
 - ⚠️ Never commit `.env*` files to your project repos
-- ✅ Your env files are stored in `.genvx/gitstore/{host}/{owner}/{repo}/` (or `node_modules/.genvx/gitstore/...` when `node_modules` exists)
-- 🔒 The gitstore should only be accessible to you/your team
-- 🔐 **Optional encryption**: You can use [git-crypt](https://github.com/AGWA/git-crypt) in your gitstore repository for an additional layer of encryption on top of private repo access
-
-## File Structure
-
-### Local Project
-```
-your-project/
-├── .env.local          # Gitignored
-├── .env.prod.local     # Gitignored
-├── .env.dev.local      # Gitignored
-└── .genvx/                          # Temporary, cleaned after operations
-```
-
-### Gitstore Repository
-```
-envs-repo/
-└── github.com/
-    └── yourname/
-        └── your-project/
-            ├── .env.local
-            ├── .env.prod.local
-            └── .env.dev.local
-```
+- 🔒 Branch isolation ensures you only see your own project's secrets
+- 🔒 Hashed branch names hide which project they belong to
+- 🔐 **Optional encryption**: Use [git-crypt](https://github.com/AGWA/git-crypt) for additional encryption
 
 ## Commands
 
-### `genvx push` (alias: `p`, `save`)
-Push all local `.env*` files to gitstore
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `push` | `p`, `save` | Push local `.env*` files to gitstore |
+| `pull` | `load` | Pull `.env*` files from gitstore |
+| `diff` | `d` | Show pending changes (dry run) |
+| `branch` | `b` | Show hashed branch name for this project |
 
-### `genvx pull` (alias: `load`)
-Pull all `.env*` files from gitstore to local
+### Options
 
-### `genvx sync` (alias: `s`)
-Pull then push `.env*` files
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--gitstore` | `-g` | Git repository URL for env storage |
+| `--yes` | `-y` | Skip confirmation prompts |
+| `--help` | `-h` | Show help |
+| `--version` | `-v` | Show version |
 
 ## Development
 
 Built with:
 - [Bun](https://bun.sh) - Fast JavaScript runtime
 - [yargs](https://yargs.js.org) - CLI argument parsing
-- [execa](https://github.com/sindresorhus/execa) - Process execution
 
 ## License
 
-This project was created using `bun init` in bun v1.3.6.
-### Sync (pull then push)
-
-```bash
-# Pull then push
-genvx sync
-
-# Or use short alias
-genvx s
-```
-
-Sync is equivalent to running `pull` then `push`.
+MIT

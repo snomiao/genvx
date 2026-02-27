@@ -5,6 +5,7 @@ import {
   getGitstoreConfig,
   isInsideGitstoreDir,
   getGitRemote,
+  getBranchName,
   pushToGitstore,
   pullFromGitstore,
   diffWithGitstore,
@@ -104,12 +105,28 @@ export function runCli() {
         await cleanup();
       }
     )
+    .command(
+      ["branch", "b"],
+      "Show the hashed branch name for this project",
+      () => { },
+      async () => {
+        try {
+          const gitRemote = await getGitRemote();
+          const branch = getBranchName(gitRemote);
+          console.log(branch);
+        } catch (error) {
+          console.error("Error:", (error as Error).message);
+          process.exit(1);
+        }
+      }
+    )
     .example("$0 push", "Push all .env* files to gitstore")
     .example("$0 push -y", "Push without confirmation prompt")
     .example("$0 pull", "Pull all .env* files from gitstore")
     .example("$0 pull -y", "Pull without confirmation prompt")
     .example("$0 diff", "Show pending changes without modifying files")
     .example("$0 push --gitstore=https://github.com/user/secrets.git", "Push with specific gitstore")
+    .example("$0 branch", "Show hashed branch name for this project")
     .help()
     .alias("h", "help")
     .version()

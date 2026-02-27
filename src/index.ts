@@ -3,6 +3,7 @@ import { readFile, writeFile, copyFile, mkdir, rm, chmod } from "fs/promises";
 import { join, resolve, sep, dirname } from "path";
 import { platform, homedir } from "os";
 import { createInterface } from "readline/promises";
+import { createHash } from "crypto";
 
 // Types
 type Change = { status: string; file: string; added: number; removed: number };
@@ -92,6 +93,15 @@ export function parseGitRemote(remoteUrl: string): { host: string; owner: string
   return { host: match[1], owner: match[2], repo: match[3] };
 }
 
+// Generate hashed branch name from project identifier
+// Uses SHA256 truncated to 16 chars for obscurity while keeping it manageable
+export function getBranchName(gitRemote: string): string {
+  const { host, owner, repo } = parseGitRemote(gitRemote);
+  const projectId = `${host}/${owner}/${repo}`.toLowerCase();
+  const hash = createHash("sha256").update(projectId).digest("hex").slice(0, 16);
+  return `env/${hash}`;
+}
+
 // Get git remote URL for current repo
 export async function getGitRemote(): Promise<string> {
   try {
@@ -155,23 +165,27 @@ export async function setupGenvxDir(): Promise<string> {
   return genvxDir;
 }
 
-// Clone or pull gitstore repository
-export async function syncGitstore(gitstoreUrl: string): Promise<string> {
+// Clone or pull gitstore repository (single branch per project)
+export async function syncGitstore(gitstoreUrl: string, branch: string): Promise<string> {
   const genvxDir = await setupGenvxDir();
   const gitstorePath = join(genvxDir, "gitstore");
 
   if (!existsSync(gitstorePath)) {
-    try {
-      await Bun.$`git clone --depth 1 -q ${gitstoreUrl} ${gitstorePath}`.quiet();
-    } catch {
+    // Try to clone the specific branch
+    const cloneResult = await Bun.$`git clone --single-branch --depth 1 -b ${branch} -q ${gitstoreUrl} ${gitstorePath}`.quiet().nothrow();
+
+    if (cloneResult.exitCode !== 0) {
+      // Branch doesn't exist yet - create orphan branch
       await mkdir(gitstorePath, { recursive: true });
       await Bun.$`git -C ${gitstorePath} init -q`.quiet();
       await Bun.$`git -C ${gitstorePath} remote add origin ${gitstoreUrl}`.quiet();
-      await Bun.$`git -C ${gitstorePath} commit --allow-empty -m "Initial commit" -q`.quiet();
-      await Bun.$`git -C ${gitstorePath} push -u origin HEAD -q`.quiet().nothrow();
+      await Bun.$`git -C ${gitstorePath} checkout --orphan ${branch}`.quiet();
+      // Create initial empty commit
+      await Bun.$`git -C ${gitstorePath} commit --allow-empty -m "Initialize env branch" -q`.quiet();
     }
   } else {
-    await Bun.$`git -C ${gitstorePath} pull origin HEAD`.quiet().nothrow();
+    // Pull latest changes
+    await Bun.$`git -C ${gitstorePath} pull origin ${branch}`.quiet().nothrow();
   }
   return gitstorePath;
 }
@@ -210,11 +224,9 @@ export async function findEnvFiles(pattern: string, searchPath = "."): Promise<s
   return results;
 }
 
-// Get the project's path within gitstore
-export async function getProjectPath(gitstorePath: string): Promise<string> {
-  const gitRemote = await getGitRemote();
-  const { host, owner, repo } = parseGitRemote(gitRemote);
-  return join(gitstorePath, host, owner, repo);
+// Get the project's path within gitstore (now just root since each branch = one project)
+export function getProjectPath(gitstorePath: string): string {
+  return gitstorePath;
 }
 
 // Unified change detection - works for both pull and push
@@ -302,8 +314,10 @@ async function displayAndConfirm(
 
 // Push .env* files to gitstore
 export async function pushToGitstore(gitstoreUrl: string, yes = false) {
-  const gitstorePath = await syncGitstore(gitstoreUrl);
-  const projectPath = await getProjectPath(gitstorePath);
+  const gitRemote = await getGitRemote();
+  const branch = getBranchName(gitRemote);
+  const gitstorePath = await syncGitstore(gitstoreUrl, branch);
+  const projectPath = getProjectPath(gitstorePath);
   await ensureDir(projectPath);
 
   const localFiles = await findEnvFiles(".env*");
@@ -330,12 +344,11 @@ export async function pushToGitstore(gitstoreUrl: string, yes = false) {
     console.log(`→ ${formatLineDelta(file, added, removed)}`);
   }
 
-  // Commit and push
+  // Commit and push to branch
   try {
-    const { owner, repo } = parseGitRemote(await getGitRemote());
     await Bun.$`git -C ${gitstorePath} add -A`.quiet();
-    await Bun.$`git -C ${gitstorePath} commit -m ${"Update " + owner + "/" + repo + " env files"}`.quiet();
-    await Bun.$`git -C ${gitstorePath} push origin HEAD -q`.quiet();
+    await Bun.$`git -C ${gitstorePath} commit -m "Update env files"`.quiet();
+    await Bun.$`git -C ${gitstorePath} push -u origin ${branch} -q`.quiet();
   } catch (error) {
     console.error("Failed to push to gitstore:", error);
   }
@@ -343,12 +356,16 @@ export async function pushToGitstore(gitstoreUrl: string, yes = false) {
 
 // Pull .env* files from gitstore
 export async function pullFromGitstore(gitstoreUrl: string, yes = false) {
-  const gitstorePath = await syncGitstore(gitstoreUrl);
-  const projectPath = await getProjectPath(gitstorePath);
-  if (!existsSync(projectPath)) return;
+  const gitRemote = await getGitRemote();
+  const branch = getBranchName(gitRemote);
+  const gitstorePath = await syncGitstore(gitstoreUrl, branch);
+  const projectPath = getProjectPath(gitstorePath);
 
   const remoteFiles = await findEnvFiles(".env*", projectPath);
-  if (remoteFiles.length === 0) return;
+  if (remoteFiles.length === 0) {
+    console.log("No env files found in gitstore for this project.");
+    return;
+  }
 
   const changes = await getFileChanges(projectPath, remoteFiles, "pull");
   if (changes.length === 0) {
@@ -392,14 +409,17 @@ const getFileDiff = (oldPath: string, newPath: string): string => {
 
 // Diff .env* files (dry run)
 export async function diffWithGitstore(gitstoreUrl: string) {
-  const gitstorePath = await syncGitstore(gitstoreUrl);
-  const projectPath = await getProjectPath(gitstorePath);
+  const gitRemote = await getGitRemote();
+  const branch = getBranchName(gitRemote);
+  const gitstorePath = await syncGitstore(gitstoreUrl, branch);
+  const projectPath = getProjectPath(gitstorePath);
 
   // Pull direction
-  if (existsSync(projectPath)) {
-    const remoteFiles = await findEnvFiles(".env*", projectPath);
+  const remoteFiles = await findEnvFiles(".env*", projectPath);
+  if (remoteFiles.length === 0) {
+    console.log("pull: (no remote files found)");
+  } else {
     const pullChanges = await getFileChanges(projectPath, remoteFiles, "pull");
-
     if (pullChanges.length === 0) {
       console.log("pull: (no changes)");
     } else {
@@ -413,8 +433,6 @@ export async function diffWithGitstore(gitstoreUrl: string) {
         }
       }
     }
-  } else {
-    console.log("pull: (no remote files found)");
   }
 
   // Push direction
