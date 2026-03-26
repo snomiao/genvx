@@ -1,17 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
 import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
   cleanup,
   getGenvxDir,
-  getProjectPath,
   pullFromGitstore,
   pushToGitstore,
   decrypt,
   getProjectId,
-  parseGitRemote,
 } from "./index.js";
 
 process.env.GIT_AUTHOR_NAME ??= "genvx";
@@ -69,15 +66,14 @@ describe("push/pull behavior in both temp dirs", () => {
 
         await writeFile(join(repoDir, ".env"), "A=1\n");
         await writeFile(join(repoDir, ".env.local"), "B=1\n");
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
 
         expect(getGenvxDir()).toBe(expectedDir);
 
         const gitstorePath = join(getGenvxDir(), "gitstore");
-        const projectPath = getProjectPath(gitstorePath);
         // Files are now encrypted with .enc suffix
-        const remoteEnvPath = join(projectPath, ".env.enc");
-        const remoteEnvLocalPath = join(projectPath, ".env.local.enc");
+        const remoteEnvPath = join(gitstorePath, ".env.enc");
+        const remoteEnvLocalPath = join(gitstorePath, ".env.local.enc");
 
         // Decrypt and verify content
         const encEnv = await readFile(remoteEnvPath, "utf-8");
@@ -86,12 +82,12 @@ describe("push/pull behavior in both temp dirs", () => {
         expect(decrypt(encEnvLocal, encryptionKey, projectId)).toBe("B=1\n");
 
         await writeFile(join(repoDir, ".env.local"), "B=2\n");
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
         const encEnvLocal2 = await readFile(remoteEnvLocalPath, "utf-8");
         expect(decrypt(encEnvLocal2, encryptionKey, projectId)).toBe("B=2\n");
 
         await unlink(join(repoDir, ".env.local"));
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
         // Remote should still have the file (deletes don't propagate)
         const encEnvLocal3 = await readFile(remoteEnvLocalPath, "utf-8");
         expect(decrypt(encEnvLocal3, encryptionKey, projectId)).toBe("B=2\n");
@@ -117,26 +113,25 @@ describe("push/pull behavior in both temp dirs", () => {
 
         await writeFile(join(repoDir, ".env"), "A=1\n");
         await writeFile(join(repoDir, ".env.local"), "B=1\n");
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
 
         await unlink(join(repoDir, ".env"));
         await unlink(join(repoDir, ".env.local"));
 
-        await pullFromGitstore(gitstoreUrl);
+        await pullFromGitstore(gitstoreUrl, true);
         expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
         expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=1\n");
 
         // Modify remote encrypted file directly
         const gitstorePath = join(getGenvxDir(), "gitstore");
-        const projectPath = getProjectPath(gitstorePath);
         const encryptedContent = encrypt("B=3\n", encryptionKey, projectId);
-        await writeFile(join(projectPath, ".env.local.enc"), encryptedContent);
-        await pullFromGitstore(gitstoreUrl);
+        await writeFile(join(gitstorePath, ".env.local.enc"), encryptedContent);
+        await pullFromGitstore(gitstoreUrl, true);
         expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=3\n");
 
         // Remote delete shouldn't affect local
-        await unlink(join(projectPath, ".env.local.enc"));
-        await pullFromGitstore(gitstoreUrl);
+        await unlink(join(gitstorePath, ".env.local.enc"));
+        await pullFromGitstore(gitstoreUrl, true);
         expect(await readFile(join(repoDir, ".env.local"), "utf-8")).toBe("B=3\n");
       } finally {
         await cleanup();
@@ -160,23 +155,22 @@ describe("sync behavior in both temp dirs", () => {
         const encryptionKey = process.env.GENVX_KEY!;
 
         await writeFile(join(repoDir, ".env"), "A=1\n");
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
 
         await unlink(join(repoDir, ".env"));
-        await pullFromGitstore(gitstoreUrl);
+        await pullFromGitstore(gitstoreUrl, true);
         expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
 
         await writeFile(join(repoDir, ".env"), "A=2\n");
-        await pullFromGitstore(gitstoreUrl);
+        await pullFromGitstore(gitstoreUrl, true);
         expect(await readFile(join(repoDir, ".env"), "utf-8")).toBe("A=1\n");
 
         await writeFile(join(repoDir, ".env"), "A=2\n");
-        await pushToGitstore(gitstoreUrl);
+        await pushToGitstore(gitstoreUrl, true);
 
         const gitstorePath = join(getGenvxDir(), "gitstore");
-        const projectPath = getProjectPath(gitstorePath);
         // File is encrypted
-        const encEnv = await readFile(join(projectPath, ".env.enc"), "utf-8");
+        const encEnv = await readFile(join(gitstorePath, ".env.enc"), "utf-8");
         expect(decrypt(encEnv, encryptionKey, projectId)).toBe("A=2\n");
       } finally {
         await cleanup();

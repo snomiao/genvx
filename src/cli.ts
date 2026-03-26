@@ -12,6 +12,17 @@ import {
   cleanup
 } from "./index.js";
 
+async function withCleanup(fn: () => Promise<void>) {
+  try {
+    await fn();
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  } finally {
+    await cleanup();
+  }
+}
+
 async function guardGitstore(gitstore: string) {
   const cwd = process.cwd();
   if (isInsideGitstoreDir(cwd)) {
@@ -85,8 +96,7 @@ export function runCli() {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
         const useEncryption = !(argv["no-encrypt"] as boolean);
-        await pushToGitstore(gitstore, argv.yes as boolean, useEncryption);
-        await cleanup();
+        await withCleanup(() => pushToGitstore(gitstore, argv.yes as boolean, useEncryption));
       }
     )
     .command(
@@ -97,8 +107,7 @@ export function runCli() {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
         const useEncryption = !(argv["no-encrypt"] as boolean);
-        await pullFromGitstore(gitstore, argv.yes as boolean, useEncryption);
-        await cleanup();
+        await withCleanup(() => pullFromGitstore(gitstore, argv.yes as boolean, useEncryption));
       }
     )
     .command(
@@ -109,8 +118,7 @@ export function runCli() {
         const gitstore = await resolveGitstore(argv.gitstore as string | undefined);
         await guardGitstore(gitstore);
         const useEncryption = !(argv["no-encrypt"] as boolean);
-        await diffWithGitstore(gitstore, useEncryption);
-        await cleanup();
+        await withCleanup(() => diffWithGitstore(gitstore, useEncryption));
       }
     )
     .command(
