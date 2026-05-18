@@ -6,7 +6,11 @@
   "type": "module",
   "version": "0.0.0",
   "bin": {
-    "genvx": "./src/cli.ts"
+    "genvx": "src/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/snomiao/genvx.git"
   },
   "files": [
     "src/cli.ts",
