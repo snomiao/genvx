@@ -8,15 +8,21 @@
   "bin": {
     "genvx": "./src/cli.ts"
   },
+  "files": [
+    "src/cli.ts",
+    "src/index.ts"
+  ],
   "scripts": {
-    "build": "bunx tsdown"
+    "build": "bunx tsdown",
+    "test": "bun test"
   },
   "dependencies": {
     "yargs": "^17.7.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/yargs": "^17.0.35"
+    "@types/yargs": "^17.0.35",
+    "semantic-release": "^25.0.3"
   },
   "peerDependencies": {
     "typescript": "^5"
