@@ -9,6 +9,7 @@ import {
   pushToGitstore,
   pullFromGitstore,
   diffWithGitstore,
+  setupConfig,
   cleanup
 } from "./index.js";
 
@@ -89,6 +90,27 @@ export function runCli() {
       }
     })
     .command(
+      ["setup", "init"],
+      "Interactively configure GENVX_STORE and GENVX_KEY",
+      (y) =>
+        y.option("dir", {
+          type: "string",
+          description: "Directory to save the config file (.env.local)",
+        }),
+      async (argv) => {
+        try {
+          await setupConfig({
+            dir: argv.dir as string | undefined,
+            store: argv.gitstore as string | undefined,
+            yes: argv.yes as boolean,
+          });
+        } catch (error) {
+          console.error(`Error: ${(error as Error).message}`);
+          process.exit(1);
+        }
+      }
+    )
+    .command(
       ["push", "p", "save"],
       "Save .env* files to gitstore (encrypted by default)",
       () => { },
@@ -136,6 +158,8 @@ export function runCli() {
         }
       }
     )
+    .example("$0 setup", "Interactively configure gitstore URL and encryption key")
+    .example("$0 setup --dir=~/.config/genvx", "Save config to a custom directory")
     .example("$0 push", "Push all .env* files to gitstore")
     .example("$0 push -y", "Push without confirmation prompt")
     .example("$0 pull", "Pull all .env* files from gitstore")

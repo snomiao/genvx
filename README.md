@@ -47,6 +47,30 @@ bun link
 
 ## Configuration
 
+### Quick start: `genvx setup`
+
+The fastest way to configure genvx is the interactive setup command:
+
+```bash
+genvx setup
+```
+
+It walks you through:
+
+1. **Where to save** - global (`~/.genvx/.env.local`), the current project (`./.env.local`), or a custom directory
+2. **Gitstore URL** - your private repo (an empty repo is fine; genvx initializes it on first push)
+3. **Encryption key** - auto-generates a strong key, or accepts your own
+
+The config file is written with `600` permissions. Non-interactive use:
+
+```bash
+genvx setup --gitstore=https://github.com/me/envs.git --dir=~/.config/genvx -y
+```
+
+If you save to a custom directory, set `GENVX_CONFIG_DIR=<dir>` so genvx loads it.
+
+### Manual configuration
+
 ### Required: Encryption Key
 
 Set your encryption key (required for push/pull):
@@ -215,6 +239,7 @@ genvx --gitstore=git@github.com:company/envs.git push
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
+| `setup` | `init` | Interactively configure gitstore URL and encryption key |
 | `push` | `p`, `save` | Push local `.env*` files to gitstore (encrypted) |
 | `pull` | `load` | Pull `.env*` files from gitstore (decrypted) |
 | `diff` | `d` | Show pending changes (dry run) |
@@ -225,6 +250,7 @@ genvx --gitstore=git@github.com:company/envs.git push
 | Option | Alias | Description |
 |--------|-------|-------------|
 | `--gitstore` | `-g` | Git repository URL for env storage |
+| `--dir` | - | Directory to save config (`setup` only) |
 | `--yes` | `-y` | Skip confirmation prompts |
 | `--no-encrypt` | - | Disable encryption (not recommended) |
 | `--help` | `-h` | Show help |

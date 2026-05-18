@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { statSync } from "fs";
 import {
   cleanup,
   getGenvxDir,
@@ -9,6 +10,7 @@ import {
   pushToGitstore,
   decrypt,
   getProjectId,
+  setupConfig,
 } from "./index.js";
 
 process.env.GIT_AUTHOR_NAME ??= "genvx";
@@ -179,4 +181,39 @@ describe("sync behavior in both temp dirs", () => {
       }
     }
   }, 30000);
+});
+
+describe("setupConfig", () => {
+  test("writes config with secure perms and is idempotent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "genvx-setup-"));
+    try {
+      // Pre-existing file with unrelated content
+      await writeFile(
+        join(dir, ".env.local"),
+        "# my config\nOTHER_VAR=keepme\nGENVX_STORE=https://old.git\n",
+      );
+
+      await setupConfig({ dir, store: "https://new.git", yes: true });
+
+      const content = await readFile(join(dir, ".env.local"), "utf-8");
+      expect(content).toContain("# my config");
+      expect(content).toContain("OTHER_VAR=keepme");
+      expect(content).toContain("GENVX_STORE=https://new.git");
+      expect(content).not.toContain("https://old.git");
+      expect(content).toMatch(/GENVX_KEY=.+/);
+
+      // 600 permissions (skip assertion on Windows)
+      if (process.platform !== "win32") {
+        expect(statSync(join(dir, ".env.local")).mode & 0o777).toBe(0o600);
+      }
+
+      // Re-run keeps the existing generated key
+      const keyLine = content.split("\n").find((l) => l.startsWith("GENVX_KEY="));
+      await setupConfig({ dir, store: "https://new.git", yes: true });
+      const content2 = await readFile(join(dir, ".env.local"), "utf-8");
+      expect(content2.split("\n").find((l) => l.startsWith("GENVX_KEY="))).toBe(keyLine);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

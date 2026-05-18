@@ -53,6 +53,19 @@ async function confirmAction(prompt = "Proceed? [Y/n] "): Promise<boolean> {
   }
 }
 
+// Free-text prompt with optional default
+async function promptInput(question: string, defaultValue = ""): Promise<string> {
+  if (!process.stdin.isTTY) return defaultValue;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const suffix = defaultValue ? ` [${defaultValue}]` : "";
+    const answer = (await rl.question(`${question}${suffix}: `)).trim();
+    return answer || defaultValue;
+  } finally {
+    rl.close();
+  }
+}
+
 // Parse git remote URL to extract host, owner, and repo
 export function parseGitRemote(remoteUrl: string): { host: string; owner: string; repo: string } {
   let url = remoteUrl.startsWith("git@")
@@ -221,9 +234,11 @@ async function loadEnvConfig() {
   if (envConfigLoaded) return;
   envConfigLoaded = true;
 
+  const configDir = process.env.GENVX_CONFIG_DIR;
   const paths = [
     ".env.local",
     ".env",
+    ...(configDir ? [join(configDir, ".env.local"), join(configDir, ".env")] : []),
     join(homedir(), ".genvx/.env.local"),
     join(homedir(), ".genvx/.env"),
   ];
@@ -701,6 +716,148 @@ export async function diffWithGitstore(gitstoreUrl: string, useEncryption = true
     console.log("push:");
     await displayChanges(pushChanges, gitstorePath, "push", encryptionKey, projectId, "  ");
   }
+}
+
+// Generate a strong random encryption key
+function generateKey(): string {
+  return randomBytes(32).toString("base64");
+}
+
+// Insert or update a KEY=value line, preserving comments and other keys
+function upsertEnvVar(content: string, key: string, value: string): string {
+  const lines = content ? content.split("\n") : [];
+  let found = false;
+  const updated = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx < 0) return line;
+    if (trimmed.slice(0, eqIdx).trim() === key) {
+      found = true;
+      return `${key}=${value}`;
+    }
+    return line;
+  });
+  if (!found) updated.push(`${key}=${value}`);
+  return updated.join("\n");
+}
+
+export interface SetupOptions {
+  dir?: string;   // explicit target directory (overrides interactive choice)
+  store?: string; // GENVX_STORE value passed via flag
+  yes?: boolean;  // non-interactive mode
+}
+
+// Interactively configure GENVX_STORE and GENVX_KEY
+export async function setupConfig(opts: SetupOptions = {}): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY) && !opts.yes;
+
+  // 1. Resolve target directory
+  const expandTilde = (p: string) => p.replace(/^~(?=$|[/\\])/, homedir());
+  const globalDir = resolve(join(homedir(), ".genvx"));
+  let targetDir: string;
+  if (opts.dir) {
+    targetDir = resolve(expandTilde(opts.dir));
+  } else if (interactive) {
+    console.log("Where should genvx save your credentials?");
+    console.log("  1) Global  - ~/.genvx/.env.local  (used by every project)");
+    console.log("  2) Project - ./.env.local         (this directory only)");
+    console.log("  3) Custom directory");
+    const choice = await promptInput("Choose", "1");
+    if (choice === "2") {
+      targetDir = resolve(".");
+    } else if (choice === "3") {
+      const custom = await promptInput("Custom directory path");
+      if (!custom) throw new Error("No directory provided");
+      targetDir = resolve(expandTilde(custom));
+    } else {
+      targetDir = globalDir;
+    }
+  } else {
+    targetDir = globalDir;
+  }
+
+  const targetFile = join(targetDir, ".env.local");
+  const isAutoLoaded = targetDir === globalDir || targetDir === resolve(".");
+
+  // 2. Read existing config (preserve unrelated vars and comments)
+  let content = existsSync(targetFile) ? await readFile(targetFile, "utf-8") : "";
+  const existingVars = new Map<string, string>();
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx < 0) continue;
+    existingVars.set(trimmed.slice(0, eqIdx).trim(), trimmed.slice(eqIdx + 1).trim());
+  }
+
+  // 3. GENVX_STORE
+  let store = opts.store ?? existingVars.get("GENVX_STORE") ?? "";
+  if (!opts.store && interactive) {
+    if (!store) {
+      console.log("\nGitstore = a PRIVATE git repo where your encrypted .env* files live.");
+      console.log("Create an empty one first, e.g.:  gh repo create my-envs --private");
+      console.log("An empty repo is fine - genvx initializes it on the first push.\n");
+    }
+    store = await promptInput("Gitstore repo URL", store);
+  }
+  if (!store) {
+    throw new Error("GENVX_STORE is required. Pass --gitstore=<url> or run interactively.");
+  }
+
+  // 4. GENVX_KEY
+  let key = existingVars.get("GENVX_KEY") ?? "";
+  let keyGenerated = false;
+  if (key) {
+    if (interactive && !await confirmAction("An encryption key already exists. Keep it? [Y/n] ")) {
+      key = generateKey();
+      keyGenerated = true;
+    }
+  } else if (interactive) {
+    const ownKey = await promptInput("Encryption key (leave blank to auto-generate)");
+    if (ownKey) {
+      key = ownKey;
+    } else {
+      key = generateKey();
+      keyGenerated = true;
+    }
+  } else {
+    key = generateKey();
+    keyGenerated = true;
+  }
+
+  // 5. Build content
+  content = upsertEnvVar(content, "GENVX_STORE", store);
+  content = upsertEnvVar(content, "GENVX_KEY", key);
+  if (content && !content.endsWith("\n")) content += "\n";
+
+  // 6. Confirm
+  if (interactive) {
+    console.log(`\nWill write to: ${targetFile}`);
+    console.log(`  GENVX_STORE=${store}`);
+    console.log(`  GENVX_KEY=${"*".repeat(12)} (${keyGenerated ? "generated" : "kept"})`);
+    if (!await confirmAction("Save? [Y/n] ")) {
+      console.log("Setup cancelled.");
+      return;
+    }
+  }
+
+  // 7. Write with secure permissions
+  await ensureDir(targetDir);
+  await writeFile(targetFile, content);
+  await ensureSecurePermissions(targetFile);
+  console.log(`\n✅ Saved config to ${targetFile}`);
+
+  if (keyGenerated) {
+    console.log("\n⚠️  Encryption key generated. Save it somewhere safe -");
+    console.log("   losing it means losing access to ALL encrypted env files:");
+    console.log(`\n   GENVX_KEY=${key}\n`);
+  }
+  if (!isAutoLoaded) {
+    console.log("⚠️  This directory is not auto-loaded. To use it, set:");
+    console.log(`   export GENVX_CONFIG_DIR=${targetDir}`);
+  }
+  console.log("Next: cd into a git project and run  genvx push");
 }
 
 // Cleanup .genvx directory
