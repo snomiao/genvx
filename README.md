@@ -7,6 +7,7 @@ A simple CLI tool to save and load `.env*` files across projects using a private
 - 🔐 **Encrypted by default** - AES-256-GCM encryption with project-specific keys
 - 🔒 **Branch isolation** - Each project gets its own hashed branch (no cross-project exposure)
 - ⬆️⬇️ **Explicit transfer** - Push or pull `.env*` files
+- 🪝 **Auto-sync hooks** - Optional git hooks auto-pull fresh env on merge/checkout (local-only or shared)
 - ☁️ **Private gitstore** - Store env files in a private git repository
 - 🧹 **Clean** - Temporary `.genvx` folder is auto-cleaned after operations
 
@@ -164,6 +165,47 @@ genvx pull --no-encrypt
 
 Push and pull are one-way operations. Deletes are not propagated automatically.
 
+### Auto-sync with git hooks
+
+Running `genvx pull` by hand is easy to forget, so your `.env*` files drift out of
+date fast. Install git hooks to **auto-pull on `git pull`/merge and on branch
+checkout**:
+
+```bash
+# Auto-detects the cleanest mode for your repo (usually local-only)
+genvx hooks install
+
+# See what's detected and installed
+genvx hooks status
+
+# Remove them
+genvx hooks uninstall
+```
+
+`genvx setup` also offers to install these hooks at the end (skip with
+`genvx setup --no-hooks`).
+
+**Direction:** hooks only ever **pull** (read from the gitstore). Pushing stays a
+deliberate `genvx push`, so a stray local edit can never be sprayed into the
+shared store automatically.
+
+**Safety:** before an auto-pull overwrites a local file, the previous version is
+copied to `.genvx/backups/<timestamp>/`. The hooks are also fail-soft — if genvx
+isn't installed, isn't configured, or the network is down, the hook silently
+no-ops and never blocks your `git` command.
+
+**Modes** (pick with `--mode`, or let `auto` choose):
+
+| Mode | Where hooks live | Committed? | Best for |
+|------|------------------|------------|----------|
+| `local` | `.git/hooks/` | No (per-clone) | Solo/undercover use — default when no hook manager is present |
+| `lefthook` | `lefthook-local.yml` (gitignored) | No | Repos already using [lefthook](https://lefthook.dev) |
+| `shared` | `.husky/` or `.githooks/` | Yes | Opting the whole team in |
+
+> Git runs only **one** hook directory at a time. If [husky](https://typicode.github.io/husky/)
+> already owns `core.hooksPath`, a per-clone local hook can't fire — `auto` will
+> recommend `shared` in that case and `genvx hooks status` shows the detected manager.
+
 ## How it works
 
 ### Encryption
@@ -244,6 +286,7 @@ genvx --gitstore=git@github.com:company/envs.git push
 | `pull` | `load` | Pull `.env*` files from gitstore (decrypted) |
 | `diff` | `d` | Show pending changes (dry run) |
 | `branch` | `b` | Show hashed branch name for this project |
+| `hooks <action>` | - | Manage auto-sync git hooks: `install`, `uninstall`, `status` |
 
 ### Options
 
@@ -251,6 +294,8 @@ genvx --gitstore=git@github.com:company/envs.git push
 |--------|-------|-------------|
 | `--gitstore` | `-g` | Git repository URL for env storage |
 | `--dir` | - | Directory to save config (`setup` only) |
+| `--no-hooks` | - | Skip git-hook setup during `setup` |
+| `--mode` | - | Hook install mode: `auto`\|`local`\|`lefthook`\|`shared` (`hooks install` only) |
 | `--yes` | `-y` | Skip confirmation prompts |
 | `--no-encrypt` | - | Disable encryption (not recommended) |
 | `--help` | `-h` | Show help |
