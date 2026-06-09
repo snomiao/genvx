@@ -193,7 +193,7 @@ describe("setupConfig", () => {
         "# my config\nOTHER_VAR=keepme\nGENVX_STORE=https://old.git\n",
       );
 
-      await setupConfig({ dir, store: "https://new.git", yes: true });
+      await setupConfig({ dir, store: "https://new.git", yes: true, hooks: false });
 
       const content = await readFile(join(dir, ".env.local"), "utf-8");
       expect(content).toContain("# my config");
@@ -209,7 +209,7 @@ describe("setupConfig", () => {
 
       // Re-run keeps the existing generated key
       const keyLine = content.split("\n").find((l) => l.startsWith("GENVX_KEY="));
-      await setupConfig({ dir, store: "https://new.git", yes: true });
+      await setupConfig({ dir, store: "https://new.git", yes: true, hooks: false });
       const content2 = await readFile(join(dir, ".env.local"), "utf-8");
       expect(content2.split("\n").find((l) => l.startsWith("GENVX_KEY="))).toBe(keyLine);
     } finally {

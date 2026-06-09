@@ -626,8 +626,26 @@ export async function pushToGitstore(gitstoreUrl: string, yes = false, useEncryp
   }
 }
 
-// Pull .env* files from gitstore
-export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncryption = true) {
+// Options for a non-interactive / automated pull (used by git hooks)
+export interface PullOptions {
+  quiet?: boolean;   // suppress per-file and "no changes" output
+  backup?: boolean;  // back up the existing local file before overwriting
+}
+
+// Back up an existing local file to .genvx/backups/<timestamp>/<file>
+async function backupLocalFile(file: string, stamp: string): Promise<void> {
+  const dest = join(getGenvxDir(), "backups", stamp, file);
+  await ensureDir(dirname(dest));
+  await copyFile(file, dest);
+}
+
+// Pull .env* files from gitstore. Returns the number of files written.
+export async function pullFromGitstore(
+  gitstoreUrl: string,
+  yes = false,
+  useEncryption = true,
+  opts: PullOptions = {},
+): Promise<number> {
   const gitRemote = await getGitRemote();
   const branch = getBranchName(gitRemote);
   const projectId = getProjectId(gitRemote);
@@ -636,8 +654,8 @@ export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncr
 
   const resolved = await resolveRemoteFiles(gitstorePath, encryptionKey);
   if (!resolved) {
-    console.log("No env files found in gitstore for this project.");
-    return;
+    if (!opts.quiet) console.log("No env files found in gitstore for this project.");
+    return 0;
   }
 
   const { remoteFiles, isEncrypted } = resolved;
@@ -645,14 +663,20 @@ export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncr
   const changes = await detectChanges(gitstorePath, pairs, "pull", encryptionKey, projectId);
 
   if (changes.length === 0) {
-    console.log("\u2705 No changes");
-    return;
+    if (!opts.quiet) console.log("\u2705 No changes");
+    return 0;
   }
 
-  if (!await displayAndConfirm(changes, gitstorePath, "pull", yes, encryptionKey, projectId)) {
+  if (opts.quiet) {
+    // Automated path (hooks): only proceed when confirmation was waived.
+    if (!yes) return 0;
+  } else if (!await displayAndConfirm(changes, gitstorePath, "pull", yes, encryptionKey, projectId)) {
     console.log("Pull cancelled.");
-    return;
+    return 0;
   }
+
+  // Timestamp shared by all backups in this run (safe in the normal runtime)
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 
   // Copy files (decrypt if needed)
   for (const { file, status } of changes) {
@@ -660,6 +684,11 @@ export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncr
     const remoteFile = isEncrypted ? `${file}.enc` : file;
     const remotePath = join(gitstorePath, remoteFile);
     await ensureDir(dirname(file));
+
+    // Back up an existing file before overwriting it
+    if (opts.backup && status !== "+" && existsSync(file)) {
+      await backupLocalFile(file, stamp);
+    }
 
     if (isEncrypted && encryptionKey) {
       const encryptedContent = await readFile(remotePath, "utf-8");
@@ -672,8 +701,10 @@ export async function pullFromGitstore(gitstoreUrl: string, yes = false, useEncr
     await ensureSecurePermissions(file);
     const ms = Math.round(performance.now() - start);
     const verb = status === "+" ? "Created" : "Updated";
-    console.log(`\u2705 ${verb} ${file}  [${ms}ms]`);
+    if (!opts.quiet) console.log(`\u2705 ${verb} ${file}  [${ms}ms]`);
   }
+
+  return changes.length;
 }
 
 // Diff .env* files (dry run)
@@ -743,9 +774,10 @@ function upsertEnvVar(content: string, key: string, value: string): string {
 }
 
 export interface SetupOptions {
-  dir?: string;   // explicit target directory (overrides interactive choice)
-  store?: string; // GENVX_STORE value passed via flag
-  yes?: boolean;  // non-interactive mode
+  dir?: string;     // explicit target directory (overrides interactive choice)
+  store?: string;   // GENVX_STORE value passed via flag
+  yes?: boolean;    // non-interactive mode
+  hooks?: boolean;  // install auto-sync git hooks (default: offer/install); false to skip
 }
 
 // Interactively configure GENVX_STORE and GENVX_KEY
@@ -857,16 +889,41 @@ export async function setupConfig(opts: SetupOptions = {}): Promise<void> {
     console.log("⚠️  This directory is not auto-loaded. To use it, set:");
     console.log(`   export GENVX_CONFIG_DIR=${targetDir}`);
   }
+
+  // 8. Offer to install auto-sync git hooks in the current repo (if any)
+  if (opts.hooks !== false) try {
+    const { installHooks, detectHookManager, recommendMode } = await import("./hooks.js");
+    const { manager } = await detectHookManager(); // throws if not a git repo
+    const recommended = recommendMode(manager);
+    const wantsHooks = interactive
+      ? await confirmAction(`\nSet up auto-sync git hooks now? (mode: ${recommended}) [Y/n] `)
+      : true; // -y / non-interactive → install the detected mode
+    if (wantsHooks) {
+      const result = await installHooks("auto");
+      console.log(`✅ Auto-sync hooks installed (mode: ${result.mode}). Env will refresh on pull/checkout.`);
+      for (const w of result.warnings) console.log(`⚠️  ${w}`);
+    }
+  } catch {
+    // Not inside a git repo, or hook setup failed — skip silently.
+  }
+
   console.log("Next: cd into a git project and run  genvx push");
 }
 
-// Cleanup .genvx directory
+// Cleanup .genvx directory, preserving any timestamped backups
 export async function cleanup() {
   const genvxDir = getGenvxDir();
-  if (existsSync(genvxDir)) {
-    try {
+  if (!existsSync(genvxDir)) return;
+  try {
+    if (existsSync(join(genvxDir, "backups"))) {
+      // Keep backups/ but remove the gitstore clone and any temp files
+      for (const entry of readdirSync(genvxDir)) {
+        if (entry === "backups" || entry === ".gitignore") continue;
+        await rm(join(genvxDir, entry), { recursive: true, force: true });
+      }
+    } else {
       await rm(genvxDir, { recursive: true, force: true });
-    } catch { /* silent */ }
-  }
+    }
+  } catch { /* silent */ }
 }
 

@@ -14,7 +14,8 @@
   },
   "files": [
     "src/cli.ts",
-    "src/index.ts"
+    "src/index.ts",
+    "src/hooks.ts"
   ],
   "scripts": {
     "build": "bunx tsdown",
