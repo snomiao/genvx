@@ -1,14 +1,11 @@
-# Release workflow for a project on the rustify pipeline.
-# Written by `rustify vendor`; adapt the values under `with:`.
+# Builds the Rust `genvx` binary for every platform, proves that it behaves
+# like the TypeScript, packs it together with the TypeScript the package ships,
+# and checks on Linux, macOS and Windows (x64 and arm64) that `bun i -g` /
+# `npm i -g` gives a working `genvx` command.
 #
-# A pull request builds every platform and smoke-tests the install on Linux,
-# macOS and Windows without publishing. Publishing happens only when this
-# workflow is started with `publish` on.
+# It does not publish. Releases still go through release.yml.
 #
-# One-time setup on npmjs.com for publishing without a token: package →
-# Settings → Trusted Publisher → GitHub Actions, this repository, and the
-# filename of the workflow a release STARTS from (this file when you run it by
-# hand; the calling workflow when another workflow calls this one).
+# The pipeline lives in https://github.com/snomiao/rustify.
 
 name: rust-npm-release
 
@@ -24,32 +21,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, without a leading v (default: the version in Cargo.toml)"
+        description: "Version to build, without a leading v (default: the version in rs/Cargo.toml)"
         required: false
         type: string
-      npm_tag:
-        description: "npm dist-tag (latest, beta, ...)"
-        required: false
-        default: latest
-        type: string
-      publish:
-        description: "Publish to npm. Off = build, pack and smoke-test only."
-        required: false
-        default: false
-        type: boolean
-  workflow_call:
-    inputs:
-      version:
-        required: false
-        type: string
-      npm_tag:
-        required: false
-        default: latest
-        type: string
-      publish:
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   build:
@@ -57,9 +31,11 @@ jobs:
     with:
       manifest: rs/Cargo.toml
       bins: genvx
-      smoke: genvx --version
       version: ${{ inputs.version }}
-      npm-tag: ${{ inputs.npm_tag || 'latest' }}
+      # (--version is no use as the check: it is still answered by yargs,
+      # which prints "unknown" when the package was installed with bun.)
+      smoke: genvx --help
+      smoke-expect: genvx [command] [options]
       # Proof that the Rust binary behaves like the TypeScript, in three parts:
       # the parity cases (GENVX_PACKAGE_ROOT lets the binary hand back what
       # it does not take), a check that the cases meant for Rust were really
@@ -71,26 +47,8 @@ jobs:
         --rs "env GENVX_PACKAGE_ROOT=$GITHUB_WORKSPACE $RUSTIFY_BIN_DIR/genvx"
         && node rs/parity-native.mjs --runner "$RUSTIFY_PARITY" --rs "$RUSTIFY_BIN_DIR/genvx"
         && bash rs/cross-compat.sh "$RUSTIFY_BIN_DIR/genvx"
-      # After installing, on every platform: one command the JavaScript still
-      # answers and one the binary answers itself (it prints nothing and
-      # exits 0 where genvx is not configured).
+      # After installing, on every platform: besides `--help`, which the
+      # JavaScript still answers, one command the binary answers itself (it
+      # prints nothing and exits 0 where genvx is not configured).
       smoke-extra: |
-        genvx --help => genvx [command] [options]
         genvx hooks run post-merge =>
-
-  publish:
-    needs: build
-    if: inputs.publish == true
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: snomiao/rustify/actions/publish@releases/v1
-
-  verify:
-    needs: [build, publish]
-    uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@releases/v1
-    with:
-      smoke: genvx --version
