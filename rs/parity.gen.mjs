@@ -20,6 +20,20 @@
 // compares ciphertext. Reading is proven with fixed ciphertexts written by
 // the TypeScript (FIX below); writing is proven by decrypting what was pushed
 // with node:crypto in an `after` probe and comparing the plaintext.
+// rs/cross-compat.sh adds what one case cannot show: both implementations
+// working on the same store.
+//
+// How to run them (from the repository root, after `bun install` and
+// `cargo build --release --manifest-path rs/Cargo.toml`):
+//
+//   node <rustify>/templates/parity/parity.mjs --cases rs/parity.json \
+//     --ts "bun src/cli.ts" --rs "env GENVX_PACKAGE_ROOT=$PWD rs/target/release/genvx"
+//   node rs/parity-native.mjs --runner <rustify>/templates/parity/parity.mjs
+//
+// GENVX_PACKAGE_ROOT tells the binary where src/cli.ts is, so that it can
+// hand back what it does not answer itself; some cases are about exactly
+// that. Those carry a `handback` reason, and the second command checks that
+// they, and only they, were handed back.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -122,12 +136,20 @@ const TIMING = ["\\[\\d+ms\\]", "[<N>ms]"];
 const STAMP = ["\\d{4}-\\d\\d-\\d\\dT\\d\\d-\\d\\d-\\d\\d-\\d{3}Z", "<STAMP>"];
 const GENERATED_KEY = ["GENVX_KEY=[A-Za-z0-9+/]{43}=", "GENVX_KEY=<GENERATED>"];
 
+const handback = (why) => ({ handback: why });
+const BUN_SYNTAX = handback("a .env file bun loads uses syntax bun interprets");
+const BUN_RUNTIME = handback("bun itself is configured differently");
+const YARGS = handback("yargs reads this in a way the Rust binary does not imitate");
+
 // ── case builder ───────────────────────────────────────────────────────────
 
 const cases = [];
 /**
  * add(name, args, parts...) — each part is { files, setup, after, env, stdin,
- * normalize }; they are merged in order.
+ * normalize, handback }; they are merged in order.
+ *
+ * `handback` says why the JavaScript, not the Rust binary, is meant to answer
+ * the invocation. The runner ignores it; rs/parity-native.mjs checks it.
  */
 function add(name, args, ...parts) {
   const c = { name, args, files: {}, setup: [], after: [], env: {}, normalize: [] };
@@ -139,7 +161,10 @@ function add(name, args, ...parts) {
     Object.assign(c.env, part.env || {});
     c.normalize.push(...(part.normalize || []));
     if (part.stdin !== undefined) c.stdin = part.stdin;
+    if (part.handback) c.handback = part.handback;
   }
+  // Every case of the last section is one yargs answers.
+  if (name.startsWith("yargs: ")) c.handback = YARGS.handback;
   for (const key of ["files", "setup", "after", "env", "normalize"]) {
     if (!Object.keys(c[key]).length) delete c[key];
   }
@@ -151,6 +176,7 @@ const setup = (...lines) => ({ setup: lines.flat() });
 const after = (...lines) => ({ after: lines.flat() });
 const env = (map) => ({ env: map });
 const dec = files({ "../dec.mjs": DEC });
+const NO_NATIVE = [env({ GENVX_NO_NATIVE: "1" }), handback("GENVX_NO_NATIVE is set")];
 
 /** The usual scene: project repo, identity, a store holding `tree`, home config. */
 const scene = (tree, opts = {}) => [setup(IDENT, repo(opts.remote)), store(tree, opts), setup(homeConfig(opts))];
@@ -174,6 +200,8 @@ add("branch: not a git repository", ["branch"]);
 add("branch: repository without origin", ["branch"], setup(repo(null)));
 add("branch: from a subdirectory of the repository", ["branch"], setup("git init -q -b main ..", `git -C .. remote add origin ${REMOTE}`));
 add("branch: ignores config and store settings", ["branch"], setup(repo()), env({ GENVX_STORE: "../nowhere.git", GENVX_KEY: "x" }));
+
+add("branch: GENVX_NO_NATIVE=1", ["branch"], setup(repo()), NO_NATIVE);
 
 // What bun loads from the directory before the program starts reaches git too.
 const viaEnvConfig = (url) => `GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=${url}\n`;
@@ -209,6 +237,30 @@ add(
   }),
 );
 add(
+  "branch: an empty value in a stronger .env file hides the weaker file's value",
+  ["branch"],
+  setup(repo()),
+  files({
+    ".env": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\n",
+    ".env.development": "GIT_CONFIG_VALUE_0=https://github.com/from/development.git\n",
+    ".env.development.local": "GIT_CONFIG_VALUE_0=\n",
+  }),
+);
+add(
+  "branch: .env.production, .env.test and their .local files are not loaded",
+  ["branch"],
+  setup(repo()),
+  files({
+    ".env.production": viaEnvConfig("https://github.com/from/production.git"),
+    ".env.production.local": viaEnvConfig("https://github.com/from/production-local.git"),
+    ".env.test": viaEnvConfig("https://github.com/from/test.git"),
+    ".env.test.local": viaEnvConfig("https://github.com/from/test-local.git"),
+    ".env.staging": viaEnvConfig("https://github.com/from/staging.git"),
+    ".envrc": viaEnvConfig("https://github.com/from/envrc.git"),
+    "sub/.env": viaEnvConfig("https://github.com/from/sub.git"),
+  }),
+);
+add(
   "branch: the real environment beats .env",
   ["branch"],
   setup(repo()),
@@ -229,22 +281,66 @@ add(
   files({ ".env": "# comment\r\n\r\nGIT_CONFIG_COUNT=1\r\nGIT_CONFIG_KEY_0=remote.origin.url  \r\nGIT_CONFIG_VALUE_0=\t https://github.com/from/crlf.git" }),
 );
 add(
+  "branch: .env comments may hold quotes, $ and #",
+  ["branch"],
+  setup(repo()),
+  files({ ".env": "# don't \"quote\" `this` $HOME # at all\nGIT_CONFIG_COUNT=1\n#GIT_CONFIG_COUNT=0\nGIT_CONFIG_KEY_0=remote.origin.url\n# it's 'fine\nGIT_CONFIG_VALUE_0=https://github.com/from/after-comments.git\n" }),
+);
+add(
+  "branch: .env values with unusual but literal characters",
+  ["branch"],
+  setup(repo()),
+  files({ ".env": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nEMPTY=\nGIT_CONFIG_VALUE_0=https://h.example/o w n e r/r\\e%p+o;x&y=z,[a]{b}(c)<d>|e^f~g*h?i!j@k:l=m==\n" }),
+);
+add(
   "branch: .env with a quoted value (bun strips the quotes)",
   ["branch"],
   setup(repo()),
   files({ ".env": 'GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0="remote.origin.url"\nGIT_CONFIG_VALUE_0=\'https://github.com/from/quoted.git\'\n' }),
 );
 add(
+  "branch: .env with comments after bare values and blank lines of spaces",
+  ["branch"],
+  setup(repo()),
+  files({ ".env": "GIT_CONFIG_COUNT=1 # one\n   \nGIT_CONFIG_KEY_0=remote.origin.url#no space\n\t\nGIT_CONFIG_VALUE_0=https://github.com/from/bare comment.git \t # trailing = x\nEMPTY= # nothing\nALSO_EMPTY=#\n" }),
+);
+add(
+  "branch: .env with quoted values holding spaces, # and =",
+  ["branch"],
+  setup(repo()),
+  files({ ".env": "GIT_CONFIG_COUNT=\"1\"   \nGIT_CONFIG_KEY_0='remote.origin.url' # which key\nGIT_CONFIG_VALUE_0= \"https://github.com/from/ q u o # t e d = .git \"#c\nEMPTY=\"\"\nALSO_EMPTY=''\n" }),
+);
+add(
+  "branch: .env with a quoted value, CRLF",
+  ["branch"],
+  setup(repo()),
+  files({ ".env": "GIT_CONFIG_COUNT='1'\r\nGIT_CONFIG_KEY_0=\"remote.origin.url\" # k\r\nGIT_CONFIG_VALUE_0='https://github.com/from/crlf quoted.git'\r\n" }),
+);
+const quotedBranch = (label, valueLine, why = BUN_SYNTAX) =>
+  add(`branch: .env with ${label}`, ["branch"], setup(repo()), files({ ".env": `OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\n${valueLine}\n` }), why);
+quotedBranch("a $ reference inside double quotes", 'GIT_CONFIG_VALUE_0="https://github.com/$OWNER/dq.git"');
+quotedBranch("a $ reference inside single quotes", "GIT_CONFIG_VALUE_0='https://github.com/$OWNER/sq.git'");
+quotedBranch("an escape inside double quotes", 'GIT_CONFIG_VALUE_0="https://github.com/from/a\\tb\\\\c.git"');
+quotedBranch("text after the closing quote", 'GIT_CONFIG_VALUE_0="https://github.com/from/closed.git"trailing');
+quotedBranch("a quote that is never closed", 'GIT_CONFIG_VALUE_0="https://github.com/from/open.git');
+quotedBranch("a quoted value over two lines", 'GIT_CONFIG_VALUE_0="https://github.com/from/two\nlines.git"');
+quotedBranch("the other quote inside a quoted value", "GIT_CONFIG_VALUE_0=\"https://github.com/from/it's.git\"");
+quotedBranch("a backtick value", "GIT_CONFIG_VALUE_0=`https://github.com/from/backtick.git`");
+quotedBranch("a quote inside a trailing comment", "GIT_CONFIG_VALUE_0=https://github.com/from/commented.git # it's here");
+quotedBranch("an indented comment", "  # indented\nGIT_CONFIG_VALUE_0=https://github.com/from/indented-comment.git");
+add(
   "branch: .env with an inline comment and a $ reference",
   ["branch"],
   setup(repo()),
   files({ ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1 # one\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/$OWNER/thing.git\n" }),
+  BUN_SYNTAX,
 );
 add(
   "branch: .env with export and indented lines",
   ["branch"],
   setup(repo()),
   files({ ".env": "export GIT_CONFIG_COUNT=1\n  GIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0 = https://github.com/from/export.git\n" }),
+  BUN_SYNTAX,
 );
 add(
   "branch: NODE_ENV=production loads .env.production",
@@ -252,6 +348,7 @@ add(
   setup(repo()),
   files({ ".env": viaEnvConfig("https://github.com/from/dotenv.git"), ".env.production": "GIT_CONFIG_VALUE_0=https://github.com/from/production.git\n" }),
   env({ NODE_ENV: "production" }),
+  BUN_RUNTIME,
 );
 add(
   "branch: NODE_ENV=test skips .env.local",
@@ -259,15 +356,17 @@ add(
   setup(repo()),
   files({ ".env": viaEnvConfig("https://github.com/from/dotenv.git"), ".env.local": "GIT_CONFIG_VALUE_0=https://github.com/from/local.git\n" }),
   env({ NODE_ENV: "test" }),
+  BUN_RUNTIME,
 );
 add(
   "branch: NODE_ENV and BUN_ENV set in .env do not change which files load",
   ["branch"],
   setup(repo()),
   files({ ".env": "NODE_ENV=production\nBUN_ENV=production\n" + viaEnvConfig("https://github.com/from/dotenv.git"), ".env.production": "GIT_CONFIG_VALUE_0=https://github.com/from/production.git\n" }),
+  handback("a .env file sets a variable that steers bun"),
 );
-add("branch: bunfig.toml in the directory", ["branch"], setup(repo()), files({ "bunfig.toml": "# empty\n" }));
-add("branch: .env is a directory", ["branch"], setup(repo(), "mkdir .env"));
+add("branch: bunfig.toml in the directory", ["branch"], setup(repo()), files({ "bunfig.toml": "# empty\n" }), BUN_RUNTIME);
+add("branch: .env is a directory", ["branch"], setup(repo(), "mkdir .env"), handback("a .env file bun looks for is not a readable file"));
 
 // ═══════════════════════ where store and key come from ═════════════════════
 
@@ -390,6 +489,34 @@ add(
   pulled,
   { normalize: [TIMING] },
 );
+// bun and genvx read ./.env one after the other and read it differently. A
+// value bun finds empty is "unset" to genvx, which then takes its own reading
+// of the same line.
+add(
+  "config: an empty quoted key in ./.env becomes two quote characters",
+  ["pull"],
+  setup(repo(), homeConfig()),
+  twoStores,
+  files({ ".env": 'GENVX_KEY=""\n' }),
+  after(TREE),
+);
+add(
+  "config: a comment where the key should be becomes the key",
+  ["pull"],
+  setup(repo(), homeConfig()),
+  twoStores,
+  files({ ".env.local": "GENVX_KEY= # put the key here\n" }),
+  after(TREE),
+);
+add(
+  "config: an empty key in ./.env.development is filled from the home file",
+  ["pull"],
+  setup(repo(), homeConfig()),
+  twoStores,
+  files({ ".env.development": "GENVX_KEY=''\nGENVX_STORE= # see ~/.genvx\n" }),
+  after(TREE, cat(".env")),
+  { normalize: [TIMING] },
+);
 add(
   "config: home file with comments, blank lines, spaces, CRLF and a BOM",
   ["pull"],
@@ -428,6 +555,13 @@ add(
   pulled,
   { normalize: [TIMING] },
 );
+add(
+  "config: with --gitstore the home file is read too late to change the remote",
+  ["pull", "-g", "../other.git"],
+  setup("git init -q -b main", "git remote add origin https://github.com/from/repo-config.git", "mkdir -p ~/.genvx", `printf 'GENVX_KEY=${KEY}\\nGIT_CONFIG_COUNT=1\\nGIT_CONFIG_KEY_0=remote.origin.url\\nGIT_CONFIG_VALUE_0=${REMOTE}\\n' > ~/.genvx/.env.local`, IDENT),
+  twoStores,
+  pulled,
+);
 add("config: no store anywhere", ["pull"], setup(repo()), env({ GENVX_KEY: KEY }), after(TREE));
 add("config: no store, push", ["push"], setup(repo()), files({ ".env": "A=1\n" }), after(TREE));
 add("config: no store, diff", ["diff"], setup(repo()), after(TREE));
@@ -453,8 +587,8 @@ add(
   env({ GENVX_KEY: KEY }),
   after(TREE),
 );
-add("config: home .env.local is a directory", ["pull"], setup(repo(), "mkdir -p ~/.genvx/.env.local"), twoStores, env({ GENVX_STORE: "../store.git", GENVX_KEY: KEY }), pulled, { normalize: [TIMING] });
-add("config: bunfig.toml in the directory", ["pull"], setup(repo()), twoStores, files({ "bunfig.toml": "# empty\n" }), env({ GENVX_STORE: "../other.git", GENVX_KEY: KEY }), pulled, { normalize: [TIMING] });
+add("config: home .env.local is a directory", ["pull"], setup(repo(), "mkdir -p ~/.genvx/.env.local"), twoStores, env({ GENVX_STORE: "../store.git", GENVX_KEY: KEY }), pulled, { normalize: [TIMING] }, handback("a config file exists and cannot be read; the TypeScript crashes with bun's error dump"));
+add("config: bunfig.toml in the directory", ["pull"], setup(repo()), twoStores, files({ "bunfig.toml": "# empty\n" }), env({ GENVX_STORE: "../other.git", GENVX_KEY: KEY }), pulled, { normalize: [TIMING] }, BUN_RUNTIME);
 
 // ═════════════════════════════════ pull ════════════════════════════════════
 
@@ -571,10 +705,10 @@ add(
   scene({ ".env.enc": FIX.env }),
   files({ "real.txt": "A=0\n" }),
   setup("ln -s real.txt .env", "chmod 644 real.txt"),
-  after(TREE, "ls -l .env | cut -d' ' -f1,10-", cat("real.txt"), perms("real.txt")),
+  after(TREE, "test -L .env && readlink .env", cat("real.txt"), perms("real.txt")),
   { normalize: [TIMING] },
 );
-add("pull: GENVX_NO_NATIVE=1", ["pull"], scene(threeFiles), env({ GENVX_NO_NATIVE: "1" }), pulledThree, { normalize: [TIMING] });
+add("pull: GENVX_NO_NATIVE=1", ["pull"], scene(threeFiles), NO_NATIVE, pulledThree, { normalize: [TIMING] });
 
 // ═════════════════════════════════ diff ════════════════════════════════════
 
@@ -595,7 +729,7 @@ add("diff: wrong key", ["diff"], scene({ ".env.enc": FIX.envOtherKey }), files({
 add("diff: plaintext store, new remote file", ["diff"], scene({ ".env": "A=1\n" }), files({ ".env.local": "L=1\n" }), after(TREE));
 add("diff: plaintext store, changed file", ["diff"], scene({ ".env": "A=1\n" }), files({ ".env": "A=2\n" }), after(TREE));
 add("diff: no git identity and no branch", ["diff"], setup(NO_IDENT, repo()), store(null), setup(homeConfig()), files({ ".env": "A=1\n" }), after(TREE));
-add("diff: GENVX_NO_NATIVE=1", ["diff"], scene(threeFiles), files({ ".env": "A=2\n" }), env({ GENVX_NO_NATIVE: "1" }), after(TREE));
+add("diff: GENVX_NO_NATIVE=1", ["diff"], scene(threeFiles), files({ ".env": "A=2\n" }), NO_NATIVE, after(TREE));
 
 // ═════════════════════════════════ push ════════════════════════════════════
 
@@ -668,21 +802,40 @@ add(
   after(storeTree(), storeDec(".envrc.enc"), storeDec(".env.d/.env.enc")),
   { normalize: [TIMING] },
 );
+// Files bun loads on its own (.env, .env.local, .env.development*) send the
+// invocation back to the JavaScript when they use syntax bun interprets. So
+// the cases about odd content use names bun does not load, and the last four
+// show the same content under `.env` going back.
+const ODD_LINES = "A=1\r\nB = two\r\n  C=3  \nexport D=4\n#E=5\nF\n=G\nH=\nA=again\nI=a=b\n\"J\"='k'\n";
+const ODD_NEW = "ONE=1\n# c\n\nTWO = 2\nONE=3\nexport THREE=3\nnoequals\n";
+const UNICODE = "NAME=héllo→世界\nEMOJI=🚀\nKÉY=1\n";
+const NOT_UTF8 = "printf 'A=\\377\\nB=\\303(\\nC=\\342\\202\\n'";
+const WITH_BOM = "printf '\\357\\273\\277A=1\\nB=2\\n'";
 add(
   "push: how variables are read for the listing",
   ["push"],
-  scene({ ".env.enc": FIX.env }),
+  scene({ ".env.production.enc": FIX.env }),
   dec,
-  files({
-    ".env": "A=1\r\nB = two\r\n  C=3  \nexport D=4\n#E=5\nF\n=G\nH=\nA=again\nI=a=b\n\"J\"='k'\n",
-    ".env.new": "ONE=1\n# c\n\nTWO = 2\nONE=3\nexport THREE=3\nnoequals\n",
-  }),
-  pushedState(".env.enc", ".env.new.enc"),
+  files({ ".env.production": ODD_LINES, ".env.staging": ODD_NEW }),
+  pushedState(".env.production.enc", ".env.staging.enc"),
   { normalize: [TIMING] },
 );
-add("push: unicode content", ["push"], scene(null), dec, files({ ".env": "NAME=héllo→世界\nEMOJI=🚀\nKÉY=1\n" }), pushedState(".env.enc"), { normalize: [TIMING] });
-add("push: bytes that are not UTF-8 are replaced", ["push"], scene(null), dec, setup("printf 'A=\\377\\nB=\\303(\\nC=\\342\\202\\n' > .env"), pushedState(".env.enc"), { normalize: [TIMING] });
-add("push: file starting with a BOM", ["push"], scene(null), dec, setup("printf '\\357\\273\\277A=1\\nB=2\\n' > .env"), pushedState(".env.enc"), { normalize: [TIMING] });
+add("push: unicode content", ["push"], scene(null), dec, files({ ".env.production": UNICODE }), pushedState(".env.production.enc"), { normalize: [TIMING] });
+add("push: bytes that are not UTF-8 are replaced", ["push"], scene(null), dec, setup(`${NOT_UTF8} > .env.production`), pushedState(".env.production.enc"), { normalize: [TIMING] });
+add("push: file starting with a BOM", ["push"], scene(null), dec, setup(`${WITH_BOM} > .env.production`), pushedState(".env.production.enc"), { normalize: [TIMING] });
+add(
+  "push: .env with lines bun interprets",
+  ["push"],
+  scene({ ".env.enc": FIX.env }),
+  dec,
+  files({ ".env": ODD_LINES, ".env.new": ODD_NEW }),
+  pushedState(".env.enc", ".env.new.enc"),
+  { normalize: [TIMING] },
+  BUN_SYNTAX,
+);
+add("push: .env with a key that is not plain ASCII", ["push"], scene(null), dec, files({ ".env": UNICODE }), pushedState(".env.enc"), { normalize: [TIMING] }, BUN_SYNTAX);
+add("push: .env that is not UTF-8", ["push"], scene(null), dec, setup(`${NOT_UTF8} > .env`), pushedState(".env.enc"), { normalize: [TIMING] }, BUN_SYNTAX);
+add("push: .env starting with a BOM", ["push"], scene(null), dec, setup(`${WITH_BOM} > .env`), pushedState(".env.enc"), { normalize: [TIMING] }, BUN_SYNTAX);
 add("push: empty file", ["push"], scene(null), dec, files({ ".env": "" }), pushedState(".env.enc"), { normalize: [TIMING] });
 add(
   "push: local file is a symlink",
@@ -787,7 +940,7 @@ add(
   pushedState(".env.enc"),
   { normalize: [TIMING] },
 );
-add("push: GENVX_NO_NATIVE=1", ["push"], scene(null), dec, files({ ".env": "A=1\n" }), env({ GENVX_NO_NATIVE: "1" }), pushedState(".env.enc"), { normalize: [TIMING] });
+add("push: GENVX_NO_NATIVE=1", ["push"], scene(null), dec, files({ ".env": "A=1\n" }), NO_NATIVE, pushedState(".env.enc"), { normalize: [TIMING] });
 
 // ═══════════════════════════════ hooks run ═════════════════════════════════
 
@@ -827,7 +980,7 @@ add(
 );
 add("hooks run: node_modules present", ["hooks", "run", "post-merge"], scene({ ".env.enc": FIX.env }), files({ ".env": "A=0\n" }), setup("mkdir node_modules"), after(TREE, "cat node_modules/.genvx/backups/*/.env"), { normalize: [STAMP] });
 add("hooks run: store from the flag is not used", ["hooks", "run", "post-merge"], setup(IDENT, repo()), store({ ".env.enc": FIX.env }), env({ GENVX_KEY: KEY }), files({ ".env": "A=0\n" }), hookState);
-add("hooks run: GENVX_NO_NATIVE=1", ["hooks", "run", "post-merge"], scene({ ".env.enc": FIX.env }), files({ ".env": "A=0\n" }), env({ GENVX_NO_NATIVE: "1" }), hookState, { normalize: [STAMP] });
+add("hooks run: GENVX_NO_NATIVE=1", ["hooks", "run", "post-merge"], scene({ ".env.enc": FIX.env }), files({ ".env": "A=0\n" }), NO_NATIVE, hookState, { normalize: [STAMP] });
 
 // ══════════════════════════════ hooks status ═══════════════════════════════
 
@@ -866,7 +1019,7 @@ add(
   files({ ".git/hooks/post-checkout": "#!/bin/sh\n" + BLOCK("post-checkout"), ".git/hooks/post-merge": "#!/bin/sh\necho other\n", ".githooks/post-merge": "x # >>> genvx auto-sync >>> y\n", "lefthook-local.yml": "other: 1\n" }),
 );
 add("hooks status: from a subdirectory", ["hooks", "status"], setup("git init -q -b main ..", "mkdir -p ../.git/hooks ../.githooks"), files({ "../.git/hooks/post-merge": BLOCK("post-merge"), "../.githooks/post-merge": BLOCK("post-merge"), ".githooks/post-checkout": BLOCK("post-checkout") }));
-add("hooks status: GENVX_NO_NATIVE=1", ["hooks", "status"], setup(repo()), env({ GENVX_NO_NATIVE: "1" }));
+add("hooks status: GENVX_NO_NATIVE=1", ["hooks", "status"], setup(repo()), NO_NATIVE);
 
 // ══════════════════════════════ hooks install ══════════════════════════════
 
@@ -904,9 +1057,9 @@ add("hooks install: --mode local with lefthook warns", ["hooks", "install", "--m
 add("hooks install: husky (shared, in .husky)", ["hooks", "install"], setup(repo(), "git config core.hooksPath .husky/_"), files({ ".husky/pre-commit": "npm test\n", "package.json": '{"name":"x"}\n' }), hookFiles(".husky"), hooksPath, after(cat("package.json"), TREE));
 add("hooks install: custom hooks path (shared, repoints it at .githooks)", ["hooks", "install"], setup(repo(), "git config core.hooksPath my-hooks"), hookFiles(".githooks"), hooksPath, after(TREE));
 add("hooks install: --mode shared", ["hooks", "install", "--mode", "shared"], setup(repo()), hookFiles(".githooks"), hooksPath, after(TREE));
-add("hooks install: --mode shared adds a prepare script to package.json", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": '{"name":"x","version":"1.0.0","scripts":{"test":"echo"},"n":1.50,"1":true}' }), hookFiles(".githooks"), hooksPath, after(cat("package.json")));
-add("hooks install: --mode shared keeps an existing prepare script", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": '{"name":"x",\n   "scripts":{"prepare":"husky"}}' }), hookFiles(".githooks"), after(cat("package.json")));
-add("hooks install: --mode shared with a package.json that is not JSON", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": "{nope" }), hookFiles(".githooks"), after(cat("package.json")));
+add("hooks install: --mode shared adds a prepare script to package.json", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": '{"name":"x","version":"1.0.0","scripts":{"test":"echo"},"n":1.50,"1":true}' }), hookFiles(".githooks"), hooksPath, after(cat("package.json")), handback("shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"));
+add("hooks install: --mode shared keeps an existing prepare script", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": '{"name":"x",\n   "scripts":{"prepare":"husky"}}' }), hookFiles(".githooks"), after(cat("package.json")), handback("shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"));
+add("hooks install: --mode shared with a package.json that is not JSON", ["hooks", "install", "--mode=shared"], setup(repo()), files({ "package.json": "{nope" }), hookFiles(".githooks"), after(cat("package.json")), handback("shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"));
 add("hooks install: --mode shared from a subdirectory", ["hooks", "install", "--mode=shared"], setup("git init -q -b main .."), after("cat ../.githooks/post-merge", "git config --get core.hooksPath", TREE));
 add("hooks install: lefthook", ["hooks", "install"], setup(repo()), files({ "lefthook.yml": "pre-commit:\n" }), after(cat("lefthook-local.yml", ".gitignore"), TREE));
 add("hooks install: --mode lefthook without a lefthook config", ["hooks", "install", "--mode", "lefthook"], setup(repo()), after(cat("lefthook-local.yml", ".gitignore"), TREE));
@@ -924,8 +1077,23 @@ add(
   files({ "lefthook.yml": "", "lefthook-local.yml": "a: 1\n" + LEFTHOOK_BLOCK.replace("post-merge", "old-thing") + "b: 2\n", ".gitignore": "x\n  lefthook-local.yml  \ny\n" }),
   after(cat("lefthook-local.yml", ".gitignore")),
 );
-add("hooks install: bad mode", ["hooks", "install", "--mode", "bogus"], setup(repo()), after(TREE));
-add("hooks install: GENVX_NO_NATIVE=1", ["hooks", "install"], setup(repo()), env({ GENVX_NO_NATIVE: "1" }), hookFiles(".git/hooks"));
+// A linked worktree: the TypeScript writes the hooks into the worktree's own
+// git directory (.git/worktrees/<name>/hooks), where git does not look.
+const linkedWorktree = setup(
+  "git init -q -b main ../main",
+  `${SEEDER} -C ../main commit -q --allow-empty -m init`,
+  'git -C ../main worktree add -q "$PWD" -b linked',
+);
+const worktreeHooks = after("ls ../main/.git/worktrees/cwd/hooks 2>&1", "ls ../main/.git/hooks | grep -v sample", "git rev-parse --git-path hooks");
+add("hooks install: in a linked worktree", ["hooks", "install"], linkedWorktree, worktreeHooks);
+const worktreeInstalled = [
+  files({ "../fixtures/post-merge": BLOCK("post-merge"), "../fixtures/post-checkout": BLOCK("post-checkout") }),
+  setup("mkdir -p ../main/.git/worktrees/cwd/hooks && cp ../fixtures/post-merge ../main/.git/worktrees/cwd/hooks/ && cp ../fixtures/post-checkout ../main/.git/hooks/"),
+];
+add("hooks status: in a linked worktree", ["hooks", "status"], linkedWorktree, worktreeInstalled);
+add("hooks uninstall: in a linked worktree", ["hooks", "uninstall"], linkedWorktree, worktreeInstalled, worktreeHooks);
+add("hooks install: bad mode", ["hooks", "install", "--mode", "bogus"], setup(repo()), after(TREE), YARGS);
+add("hooks install: GENVX_NO_NATIVE=1", ["hooks", "install"], setup(repo()), NO_NATIVE, hookFiles(".git/hooks"));
 
 // ═════════════════════════════ hooks uninstall ═════════════════════════════
 
@@ -967,7 +1135,7 @@ add("hooks uninstall: lefthook-local.yml with other settings keeps them", ["hook
 add("hooks uninstall: lefthook-local.yml without the block is left alone", ["hooks", "uninstall"], setup(repo()), files({ "lefthook-local.yml": "pre-push: {}\n" }), after(cat("lefthook-local.yml")));
 add("hooks uninstall: marker text inside another line still counts as installed", ["hooks", "uninstall"], setup(repo()), files({ ".githooks/post-merge": "#!/bin/sh\necho '# >>> genvx auto-sync >>>'\necho x\n" }), after(cat(".githooks/post-merge")));
 add("hooks uninstall: leaves the hooks path setting", ["hooks", "uninstall"], setup(repo(), "git config core.hooksPath .githooks"), files({ ".githooks/post-merge": "#!/bin/sh\n" + BLOCK("post-merge") }), after(TREE, "git config --get core.hooksPath"));
-add("hooks uninstall: GENVX_NO_NATIVE=1", ["hooks", "uninstall"], setup(repo()), files({ ".githooks/post-merge": "#!/bin/sh\n" + BLOCK("post-merge") }), env({ GENVX_NO_NATIVE: "1" }), after(TREE));
+add("hooks uninstall: GENVX_NO_NATIVE=1", ["hooks", "uninstall"], setup(repo()), files({ ".githooks/post-merge": "#!/bin/sh\n" + BLOCK("post-merge") }), NO_NATIVE, after(TREE));
 
 // ════════════════════════════════ setup ════════════════════════════════════
 
@@ -1000,9 +1168,9 @@ add("setup: --no-hooks", ["setup", "--no-hooks", "-g", "https://example.com/me/e
 add("setup: --hooks", ["setup", "--hooks", "-g", "https://example.com/me/envs.git"], setup(repo()), homeCfg, hookFiles(".git/hooks"), { normalize: [GENERATED_KEY] });
 add("setup: husky repository gets shared hooks", ["setup", "-g", "https://example.com/me/envs.git"], setup(repo(), "git config core.hooksPath .husky/_"), homeCfg, hookFiles(".husky"), { normalize: [GENERATED_KEY] });
 add("setup: lefthook repository", ["setup", "-g", "https://example.com/me/envs.git"], setup(repo()), files({ "lefthook.yml": "" }), homeCfg, after(cat("lefthook-local.yml", ".gitignore")), { normalize: [GENERATED_KEY] });
-add("setup: custom hooks path with a package.json", ["setup", "-g", "https://example.com/me/envs.git"], setup(repo(), "git config core.hooksPath my-hooks"), files({ "package.json": '{"name":"x"}' }), homeCfg, hookFiles(".githooks"), after(cat("package.json")), { normalize: [GENERATED_KEY] });
+add("setup: custom hooks path with a package.json", ["setup", "-g", "https://example.com/me/envs.git"], setup(repo(), "git config core.hooksPath my-hooks"), files({ "package.json": '{"name":"x"}' }), homeCfg, hookFiles(".githooks"), after(cat("package.json")), { normalize: [GENERATED_KEY] }, handback("shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"));
 add("setup: hooks path set globally, outside a repository", ["setup", "-g", "https://example.com/me/envs.git"], setup("git config --global core.hooksPath /somewhere/hooks"), homeCfg, { normalize: [GENERATED_KEY] });
-add("setup: GENVX_NO_NATIVE=1", ["setup", "-g", "https://example.com/me/envs.git"], env({ GENVX_NO_NATIVE: "1" }), homeCfg, { normalize: [GENERATED_KEY] });
+add("setup: GENVX_NO_NATIVE=1", ["setup", "-g", "https://example.com/me/envs.git"], NO_NATIVE, homeCfg, { normalize: [GENERATED_KEY] });
 
 // ═════════════════ what stays with the argument parser (yargs) ═════════════
 

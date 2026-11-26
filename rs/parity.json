@@ -176,6 +176,20 @@
    }
   },
   {
+   "name": "branch: GENVX_NO_NATIVE=1",
+   "args": [
+    "branch"
+   ],
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "env": {
+    "GENVX_NO_NATIVE": "1"
+   },
+   "handback": "GENVX_NO_NATIVE is set"
+  },
+  {
    "name": "branch: .env in the directory is in git's environment",
    "args": [
     "branch"
@@ -234,6 +248,40 @@
    ]
   },
   {
+   "name": "branch: an empty value in a stronger .env file hides the weaker file's value",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\n",
+    ".env.development": "GIT_CONFIG_VALUE_0=https://github.com/from/development.git\n",
+    ".env.development.local": "GIT_CONFIG_VALUE_0=\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
+   "name": "branch: .env.production, .env.test and their .local files are not loaded",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env.production": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/production.git\n",
+    ".env.production.local": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/production-local.git\n",
+    ".env.test": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/test.git\n",
+    ".env.test.local": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/test-local.git\n",
+    ".env.staging": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/staging.git\n",
+    ".envrc": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/envrc.git\n",
+    "sub/.env": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/sub.git\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
    "name": "branch: the real environment beats .env",
    "args": [
     "branch"
@@ -279,6 +327,32 @@
    ]
   },
   {
+   "name": "branch: .env comments may hold quotes, $ and #",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "# don't \"quote\" `this` $HOME # at all\nGIT_CONFIG_COUNT=1\n#GIT_CONFIG_COUNT=0\nGIT_CONFIG_KEY_0=remote.origin.url\n# it's 'fine\nGIT_CONFIG_VALUE_0=https://github.com/from/after-comments.git\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
+   "name": "branch: .env values with unusual but literal characters",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "GIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nEMPTY=\nGIT_CONFIG_VALUE_0=https://h.example/o w n e r/r\\e%p+o;x&y=z,[a]{b}(c)<d>|e^f~g*h?i!j@k:l=m==\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
    "name": "branch: .env with a quoted value (bun strips the quotes)",
    "args": [
     "branch"
@@ -292,6 +366,185 @@
    ]
   },
   {
+   "name": "branch: .env with comments after bare values and blank lines of spaces",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "GIT_CONFIG_COUNT=1 # one\n   \nGIT_CONFIG_KEY_0=remote.origin.url#no space\n\t\nGIT_CONFIG_VALUE_0=https://github.com/from/bare comment.git \t # trailing = x\nEMPTY= # nothing\nALSO_EMPTY=#\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
+   "name": "branch: .env with quoted values holding spaces, # and =",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "GIT_CONFIG_COUNT=\"1\"   \nGIT_CONFIG_KEY_0='remote.origin.url' # which key\nGIT_CONFIG_VALUE_0= \"https://github.com/from/ q u o # t e d = .git \"#c\nEMPTY=\"\"\nALSO_EMPTY=''\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
+   "name": "branch: .env with a quoted value, CRLF",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "GIT_CONFIG_COUNT='1'\r\nGIT_CONFIG_KEY_0=\"remote.origin.url\" # k\r\nGIT_CONFIG_VALUE_0='https://github.com/from/crlf quoted.git'\r\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ]
+  },
+  {
+   "name": "branch: .env with a $ reference inside double quotes",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/$OWNER/dq.git\"\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with a $ reference inside single quotes",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0='https://github.com/$OWNER/sq.git'\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with an escape inside double quotes",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/from/a\\tb\\\\c.git\"\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with text after the closing quote",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/from/closed.git\"trailing\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with a quote that is never closed",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/from/open.git\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with a quoted value over two lines",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/from/two\nlines.git\"\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with the other quote inside a quoted value",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=\"https://github.com/from/it's.git\"\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with a backtick value",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=`https://github.com/from/backtick.git`\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with a quote inside a trailing comment",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\nGIT_CONFIG_VALUE_0=https://github.com/from/commented.git # it's here\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
+   "name": "branch: .env with an indented comment",
+   "args": [
+    "branch"
+   ],
+   "files": {
+    ".env": "OWNER=expanded\nGIT_CONFIG_COUNT=1\nGIT_CONFIG_KEY_0=remote.origin.url\n  # indented\nGIT_CONFIG_VALUE_0=https://github.com/from/indented-comment.git\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git"
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
+  },
+  {
    "name": "branch: .env with an inline comment and a $ reference",
    "args": [
     "branch"
@@ -302,7 +555,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
    "name": "branch: .env with export and indented lines",
@@ -315,7 +569,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
    "name": "branch: NODE_ENV=production loads .env.production",
@@ -332,7 +587,8 @@
    ],
    "env": {
     "NODE_ENV": "production"
-   }
+   },
+   "handback": "bun itself is configured differently"
   },
   {
    "name": "branch: NODE_ENV=test skips .env.local",
@@ -349,7 +605,8 @@
    ],
    "env": {
     "NODE_ENV": "test"
-   }
+   },
+   "handback": "bun itself is configured differently"
   },
   {
    "name": "branch: NODE_ENV and BUN_ENV set in .env do not change which files load",
@@ -363,7 +620,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "a .env file sets a variable that steers bun"
   },
   {
    "name": "branch: bunfig.toml in the directory",
@@ -376,7 +634,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "bun itself is configured differently"
   },
   {
    "name": "branch: .env is a directory",
@@ -387,7 +646,8 @@
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git",
     "mkdir .env"
-   ]
+   ],
+   "handback": "a .env file bun looks for is not a readable file"
   },
   {
    "name": "config: --gitstore <value>",
@@ -932,6 +1192,82 @@
    ]
   },
   {
+   "name": "config: an empty quoted key in ./.env becomes two quote characters",
+   "args": [
+    "pull"
+   ],
+   "files": {
+    "../seed-store/.env.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
+    "../seed-other/.env.local.enc": "v2:17:KoHF1z7Mg8yGPATKR2E3gjXr7gI7DlrwqMfliaDNqgI=:xXDUIVTARbs8DUZLDZ2TTg==:TILyn4LrA7SQklqsJyjbJA==:qzqyMA==",
+    ".env": "GENVX_KEY=\"\"\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local",
+    "git init -q --bare ../store.git",
+    "cd ../seed-store && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../store.git env/98d9fc12e0202ede",
+    "git init -q --bare ../other.git",
+    "cd ../seed-other && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../other.git env/98d9fc12e0202ede"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort"
+   ]
+  },
+  {
+   "name": "config: a comment where the key should be becomes the key",
+   "args": [
+    "pull"
+   ],
+   "files": {
+    "../seed-store/.env.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
+    "../seed-other/.env.local.enc": "v2:17:KoHF1z7Mg8yGPATKR2E3gjXr7gI7DlrwqMfliaDNqgI=:xXDUIVTARbs8DUZLDZ2TTg==:TILyn4LrA7SQklqsJyjbJA==:qzqyMA==",
+    ".env.local": "GENVX_KEY= # put the key here\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local",
+    "git init -q --bare ../store.git",
+    "cd ../seed-store && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../store.git env/98d9fc12e0202ede",
+    "git init -q --bare ../other.git",
+    "cd ../seed-other && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../other.git env/98d9fc12e0202ede"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort"
+   ]
+  },
+  {
+   "name": "config: an empty key in ./.env.development is filled from the home file",
+   "args": [
+    "pull"
+   ],
+   "files": {
+    "../seed-store/.env.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
+    "../seed-other/.env.local.enc": "v2:17:KoHF1z7Mg8yGPATKR2E3gjXr7gI7DlrwqMfliaDNqgI=:xXDUIVTARbs8DUZLDZ2TTg==:TILyn4LrA7SQklqsJyjbJA==:qzqyMA==",
+    ".env.development": "GENVX_KEY=''\nGENVX_STORE= # see ~/.genvx\n"
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local",
+    "git init -q --bare ../store.git",
+    "cd ../seed-store && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../store.git env/98d9fc12e0202ede",
+    "git init -q --bare ../other.git",
+    "cd ../seed-other && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../other.git env/98d9fc12e0202ede"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "for f in .env; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done"
+   ],
+   "normalize": [
+    [
+     "\\[\\d+ms\\]",
+     "[<N>ms]"
+    ]
+   ]
+  },
+  {
    "name": "config: home file with comments, blank lines, spaces, CRLF and a BOM",
    "args": [
     "pull"
@@ -1067,6 +1403,33 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
+   ]
+  },
+  {
+   "name": "config: with --gitstore the home file is read too late to change the remote",
+   "args": [
+    "pull",
+    "-g",
+    "../other.git"
+   ],
+   "files": {
+    "../seed-store/.env.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
+    "../seed-other/.env.local.enc": "v2:17:KoHF1z7Mg8yGPATKR2E3gjXr7gI7DlrwqMfliaDNqgI=:xXDUIVTARbs8DUZLDZ2TTg==:TILyn4LrA7SQklqsJyjbJA==:qzqyMA=="
+   },
+   "setup": [
+    "git init -q -b main",
+    "git remote add origin https://github.com/from/repo-config.git",
+    "mkdir -p ~/.genvx",
+    "printf 'GENVX_KEY=test-key-1\\nGIT_CONFIG_COUNT=1\\nGIT_CONFIG_KEY_0=remote.origin.url\\nGIT_CONFIG_VALUE_0=https://github.com/Acme/App.git\\n' > ~/.genvx/.env.local",
+    "git config --global user.name Parity && git config --global user.email parity@example.com",
+    "git init -q --bare ../store.git",
+    "cd ../seed-store && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../store.git env/98d9fc12e0202ede",
+    "git init -q --bare ../other.git",
+    "cd ../seed-other && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../other.git env/98d9fc12e0202ede"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "for f in .env .env.local; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done"
    ]
   },
   {
@@ -1336,7 +1699,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "a config file exists and cannot be read; the TypeScript crashes with bun's error dump"
   },
   {
    "name": "config: bunfig.toml in the directory",
@@ -1369,7 +1733,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "bun itself is configured differently"
   },
   {
    "name": "pull: new files from an encrypted store",
@@ -2399,7 +2764,7 @@
    ],
    "after": [
     "find . -name .git -prune -o -print | sort",
-    "ls -l .env | cut -d' ' -f1,10-",
+    "test -L .env && readlink .env",
     "for f in real.txt; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done",
     "stat -c '%a %n' real.txt"
    ],
@@ -2441,7 +2806,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "diff: nothing on either side",
@@ -2695,7 +3061,8 @@
    ],
    "env": {
     "GENVX_NO_NATIVE": "1"
-   }
+   },
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "push: first push creates the project's branch",
@@ -3112,6 +3479,126 @@
     "push"
    ],
    "files": {
+    "../seed-store/.env.production.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
+    "../dec.mjs": "import { scryptSync, createDecipheriv } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nconst text = readFileSync(0, \"utf8\");\nconst parts = text.split(\":\");\nconst bad = (why) => { console.log(\"NOT THE EXPECTED FORMAT: \" + why); process.exit(1); };\nif (parts.length !== 6 || parts[0] !== \"v2\" || parts[1] !== \"17\") bad(\"header \" + JSON.stringify(parts.slice(0, 2)));\nconst [salt, iv, tag, body] = parts.slice(2).map((p) => Buffer.from(p, \"base64\"));\nparts.slice(2).forEach((p, i) => { if ([salt, iv, tag, body][i].toString(\"base64\") !== p) bad(\"base64 of part \" + (i + 2)); });\nif (salt.length !== 32 || iv.length !== 16 || tag.length !== 16) bad(\"lengths \" + [salt.length, iv.length, tag.length]);\nconst key = scryptSync(process.argv[2], salt, 32, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });\nconst d = createDecipheriv(\"aes-256-gcm\", key, iv);\nd.setAuthTag(tag);\nconsole.log(JSON.stringify(Buffer.concat([d.update(body), d.final()]).toString(\"utf8\")));\n",
+    ".env.production": "A=1\r\nB = two\r\n  C=3  \nexport D=4\n#E=5\nF\n=G\nH=\nA=again\nI=a=b\n\"J\"='k'\n",
+    ".env.staging": "ONE=1\n# c\n\nTWO = 2\nONE=3\nexport THREE=3\nnoequals\n"
+   },
+   "setup": [
+    "git config --global user.name Parity && git config --global user.email parity@example.com",
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "git init -q --bare ../store.git",
+    "cd ../seed-store && git init -q && git checkout -q --orphan env/98d9fc12e0202ede && git add -A && git -c user.name=Seed -c user.email=seed@example.com commit -q -m seed && git push -q ../store.git env/98d9fc12e0202ede",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "git -C ../store.git log --format=%s env/98d9fc12e0202ede",
+    "git -C ../store.git ls-tree -r --name-only env/98d9fc12e0202ede",
+    "git -C ../store.git show env/98d9fc12e0202ede:.env.production.enc | bun ../dec.mjs test-key-1",
+    "git -C ../store.git show env/98d9fc12e0202ede:.env.staging.enc | bun ../dec.mjs test-key-1"
+   ],
+   "normalize": [
+    [
+     "\\[\\d+ms\\]",
+     "[<N>ms]"
+    ]
+   ]
+  },
+  {
+   "name": "push: unicode content",
+   "args": [
+    "push"
+   ],
+   "files": {
+    "../dec.mjs": "import { scryptSync, createDecipheriv } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nconst text = readFileSync(0, \"utf8\");\nconst parts = text.split(\":\");\nconst bad = (why) => { console.log(\"NOT THE EXPECTED FORMAT: \" + why); process.exit(1); };\nif (parts.length !== 6 || parts[0] !== \"v2\" || parts[1] !== \"17\") bad(\"header \" + JSON.stringify(parts.slice(0, 2)));\nconst [salt, iv, tag, body] = parts.slice(2).map((p) => Buffer.from(p, \"base64\"));\nparts.slice(2).forEach((p, i) => { if ([salt, iv, tag, body][i].toString(\"base64\") !== p) bad(\"base64 of part \" + (i + 2)); });\nif (salt.length !== 32 || iv.length !== 16 || tag.length !== 16) bad(\"lengths \" + [salt.length, iv.length, tag.length]);\nconst key = scryptSync(process.argv[2], salt, 32, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });\nconst d = createDecipheriv(\"aes-256-gcm\", key, iv);\nd.setAuthTag(tag);\nconsole.log(JSON.stringify(Buffer.concat([d.update(body), d.final()]).toString(\"utf8\")));\n",
+    ".env.production": "NAME=héllo→世界\nEMOJI=🚀\nKÉY=1\n"
+   },
+   "setup": [
+    "git config --global user.name Parity && git config --global user.email parity@example.com",
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "git init -q --bare ../store.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "git -C ../store.git log --format=%s env/98d9fc12e0202ede",
+    "git -C ../store.git ls-tree -r --name-only env/98d9fc12e0202ede",
+    "git -C ../store.git show env/98d9fc12e0202ede:.env.production.enc | bun ../dec.mjs test-key-1"
+   ],
+   "normalize": [
+    [
+     "\\[\\d+ms\\]",
+     "[<N>ms]"
+    ]
+   ]
+  },
+  {
+   "name": "push: bytes that are not UTF-8 are replaced",
+   "args": [
+    "push"
+   ],
+   "files": {
+    "../dec.mjs": "import { scryptSync, createDecipheriv } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nconst text = readFileSync(0, \"utf8\");\nconst parts = text.split(\":\");\nconst bad = (why) => { console.log(\"NOT THE EXPECTED FORMAT: \" + why); process.exit(1); };\nif (parts.length !== 6 || parts[0] !== \"v2\" || parts[1] !== \"17\") bad(\"header \" + JSON.stringify(parts.slice(0, 2)));\nconst [salt, iv, tag, body] = parts.slice(2).map((p) => Buffer.from(p, \"base64\"));\nparts.slice(2).forEach((p, i) => { if ([salt, iv, tag, body][i].toString(\"base64\") !== p) bad(\"base64 of part \" + (i + 2)); });\nif (salt.length !== 32 || iv.length !== 16 || tag.length !== 16) bad(\"lengths \" + [salt.length, iv.length, tag.length]);\nconst key = scryptSync(process.argv[2], salt, 32, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });\nconst d = createDecipheriv(\"aes-256-gcm\", key, iv);\nd.setAuthTag(tag);\nconsole.log(JSON.stringify(Buffer.concat([d.update(body), d.final()]).toString(\"utf8\")));\n"
+   },
+   "setup": [
+    "git config --global user.name Parity && git config --global user.email parity@example.com",
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "git init -q --bare ../store.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local",
+    "printf 'A=\\377\\nB=\\303(\\nC=\\342\\202\\n' > .env.production"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "git -C ../store.git log --format=%s env/98d9fc12e0202ede",
+    "git -C ../store.git ls-tree -r --name-only env/98d9fc12e0202ede",
+    "git -C ../store.git show env/98d9fc12e0202ede:.env.production.enc | bun ../dec.mjs test-key-1"
+   ],
+   "normalize": [
+    [
+     "\\[\\d+ms\\]",
+     "[<N>ms]"
+    ]
+   ]
+  },
+  {
+   "name": "push: file starting with a BOM",
+   "args": [
+    "push"
+   ],
+   "files": {
+    "../dec.mjs": "import { scryptSync, createDecipheriv } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nconst text = readFileSync(0, \"utf8\");\nconst parts = text.split(\":\");\nconst bad = (why) => { console.log(\"NOT THE EXPECTED FORMAT: \" + why); process.exit(1); };\nif (parts.length !== 6 || parts[0] !== \"v2\" || parts[1] !== \"17\") bad(\"header \" + JSON.stringify(parts.slice(0, 2)));\nconst [salt, iv, tag, body] = parts.slice(2).map((p) => Buffer.from(p, \"base64\"));\nparts.slice(2).forEach((p, i) => { if ([salt, iv, tag, body][i].toString(\"base64\") !== p) bad(\"base64 of part \" + (i + 2)); });\nif (salt.length !== 32 || iv.length !== 16 || tag.length !== 16) bad(\"lengths \" + [salt.length, iv.length, tag.length]);\nconst key = scryptSync(process.argv[2], salt, 32, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });\nconst d = createDecipheriv(\"aes-256-gcm\", key, iv);\nd.setAuthTag(tag);\nconsole.log(JSON.stringify(Buffer.concat([d.update(body), d.final()]).toString(\"utf8\")));\n"
+   },
+   "setup": [
+    "git config --global user.name Parity && git config --global user.email parity@example.com",
+    "git init -q -b main",
+    "git remote add origin https://github.com/Acme/App.git",
+    "git init -q --bare ../store.git",
+    "mkdir -p ~/.genvx && printf 'GENVX_STORE=%s\\nGENVX_KEY=test-key-1\\n' \"$(cd .. && pwd)/store.git\" > ~/.genvx/.env.local",
+    "printf '\\357\\273\\277A=1\\nB=2\\n' > .env.production"
+   ],
+   "after": [
+    "find . -name .git -prune -o -print | sort",
+    "git -C ../store.git log --format=%s env/98d9fc12e0202ede",
+    "git -C ../store.git ls-tree -r --name-only env/98d9fc12e0202ede",
+    "git -C ../store.git show env/98d9fc12e0202ede:.env.production.enc | bun ../dec.mjs test-key-1"
+   ],
+   "normalize": [
+    [
+     "\\[\\d+ms\\]",
+     "[<N>ms]"
+    ]
+   ]
+  },
+  {
+   "name": "push: .env with lines bun interprets",
+   "args": [
+    "push"
+   ],
+   "files": {
     "../seed-store/.env.enc": "v2:17:Ly8B/efWVs6osRF6K0vaKexFpHIEZn57TD1iKcuLZEY=:zCnVWAbKhaYiHPrhWx/e+Q==:NxIJF9H+c8c/1/NhNGTtHA==:mdzyox9o8qc7FQ==",
     "../dec.mjs": "import { scryptSync, createDecipheriv } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nconst text = readFileSync(0, \"utf8\");\nconst parts = text.split(\":\");\nconst bad = (why) => { console.log(\"NOT THE EXPECTED FORMAT: \" + why); process.exit(1); };\nif (parts.length !== 6 || parts[0] !== \"v2\" || parts[1] !== \"17\") bad(\"header \" + JSON.stringify(parts.slice(0, 2)));\nconst [salt, iv, tag, body] = parts.slice(2).map((p) => Buffer.from(p, \"base64\"));\nparts.slice(2).forEach((p, i) => { if ([salt, iv, tag, body][i].toString(\"base64\") !== p) bad(\"base64 of part \" + (i + 2)); });\nif (salt.length !== 32 || iv.length !== 16 || tag.length !== 16) bad(\"lengths \" + [salt.length, iv.length, tag.length]);\nconst key = scryptSync(process.argv[2], salt, 32, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });\nconst d = createDecipheriv(\"aes-256-gcm\", key, iv);\nd.setAuthTag(tag);\nconsole.log(JSON.stringify(Buffer.concat([d.update(body), d.final()]).toString(\"utf8\")));\n",
     ".env": "A=1\r\nB = two\r\n  C=3  \nexport D=4\n#E=5\nF\n=G\nH=\nA=again\nI=a=b\n\"J\"='k'\n",
@@ -3137,10 +3624,11 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
-   "name": "push: unicode content",
+   "name": "push: .env with a key that is not plain ASCII",
    "args": [
     "push"
    ],
@@ -3166,10 +3654,11 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
-   "name": "push: bytes that are not UTF-8 are replaced",
+   "name": "push: .env that is not UTF-8",
    "args": [
     "push"
    ],
@@ -3195,10 +3684,11 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
-   "name": "push: file starting with a BOM",
+   "name": "push: .env starting with a BOM",
    "args": [
     "push"
    ],
@@ -3224,7 +3714,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "a .env file bun loads uses syntax bun interprets"
   },
   {
    "name": "push: empty file",
@@ -3698,7 +4189,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "hooks run: pulls changed files and backs up what it overwrites",
@@ -4253,7 +4745,8 @@
      "\\d{4}-\\d\\d-\\d\\dT\\d\\d-\\d\\d-\\d\\d-\\d{3}Z",
      "<STAMP>"
     ]
-   ]
+   ],
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "hooks status: not a git repository",
@@ -4443,7 +4936,8 @@
    ],
    "env": {
     "GENVX_NO_NATIVE": "1"
-   }
+   },
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "hooks install: fresh repository (local)",
@@ -4745,7 +5239,8 @@
     "stat -c '%a %n' .githooks/post-merge .githooks/post-checkout",
     "git config --get core.hooksPath",
     "for f in package.json; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done"
-   ]
+   ],
+   "handback": "shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"
   },
   {
    "name": "hooks install: --mode shared keeps an existing prepare script",
@@ -4765,7 +5260,8 @@
     "for f in .githooks/post-merge .githooks/post-checkout; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done",
     "stat -c '%a %n' .githooks/post-merge .githooks/post-checkout",
     "for f in package.json; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done"
-   ]
+   ],
+   "handback": "shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"
   },
   {
    "name": "hooks install: --mode shared with a package.json that is not JSON",
@@ -4785,7 +5281,8 @@
     "for f in .githooks/post-merge .githooks/post-checkout; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done",
     "stat -c '%a %n' .githooks/post-merge .githooks/post-checkout",
     "for f in package.json; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done"
-   ]
+   ],
+   "handback": "shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"
   },
   {
    "name": "hooks install: --mode shared from a subdirectory",
@@ -4877,6 +5374,62 @@
    ]
   },
   {
+   "name": "hooks install: in a linked worktree",
+   "args": [
+    "hooks",
+    "install"
+   ],
+   "setup": [
+    "git init -q -b main ../main",
+    "git -c user.name=Seed -c user.email=seed@example.com -C ../main commit -q --allow-empty -m init",
+    "git -C ../main worktree add -q \"$PWD\" -b linked"
+   ],
+   "after": [
+    "ls ../main/.git/worktrees/cwd/hooks 2>&1",
+    "ls ../main/.git/hooks | grep -v sample",
+    "git rev-parse --git-path hooks"
+   ]
+  },
+  {
+   "name": "hooks status: in a linked worktree",
+   "args": [
+    "hooks",
+    "status"
+   ],
+   "files": {
+    "../fixtures/post-merge": "# >>> genvx auto-sync >>>\ncommand -v genvx >/dev/null 2>&1 || exit 0\ngenvx hooks run post-merge || true\n# <<< genvx auto-sync <<<\n",
+    "../fixtures/post-checkout": "# >>> genvx auto-sync >>>\ncommand -v genvx >/dev/null 2>&1 || exit 0\n[ \"$3\" = \"1\" ] || exit 0  # only on branch checkout\ngenvx hooks run post-checkout || true\n# <<< genvx auto-sync <<<\n"
+   },
+   "setup": [
+    "git init -q -b main ../main",
+    "git -c user.name=Seed -c user.email=seed@example.com -C ../main commit -q --allow-empty -m init",
+    "git -C ../main worktree add -q \"$PWD\" -b linked",
+    "mkdir -p ../main/.git/worktrees/cwd/hooks && cp ../fixtures/post-merge ../main/.git/worktrees/cwd/hooks/ && cp ../fixtures/post-checkout ../main/.git/hooks/"
+   ]
+  },
+  {
+   "name": "hooks uninstall: in a linked worktree",
+   "args": [
+    "hooks",
+    "uninstall"
+   ],
+   "files": {
+    "../fixtures/post-merge": "# >>> genvx auto-sync >>>\ncommand -v genvx >/dev/null 2>&1 || exit 0\ngenvx hooks run post-merge || true\n# <<< genvx auto-sync <<<\n",
+    "../fixtures/post-checkout": "# >>> genvx auto-sync >>>\ncommand -v genvx >/dev/null 2>&1 || exit 0\n[ \"$3\" = \"1\" ] || exit 0  # only on branch checkout\ngenvx hooks run post-checkout || true\n# <<< genvx auto-sync <<<\n"
+   },
+   "setup": [
+    "git init -q -b main ../main",
+    "git -c user.name=Seed -c user.email=seed@example.com -C ../main commit -q --allow-empty -m init",
+    "git -C ../main worktree add -q \"$PWD\" -b linked",
+    "mkdir -p ../main/.git/worktrees/cwd/hooks && cp ../fixtures/post-merge ../main/.git/worktrees/cwd/hooks/ && cp ../fixtures/post-checkout ../main/.git/hooks/"
+   ],
+   "after": [
+    "ls ../main/.git/worktrees/cwd/hooks 2>&1",
+    "ls ../main/.git/hooks | grep -v sample",
+    "git rev-parse --git-path hooks"
+   ]
+  },
+  {
    "name": "hooks install: bad mode",
    "args": [
     "hooks",
@@ -4890,7 +5443,8 @@
    ],
    "after": [
     "find . -name .git -prune -o -print | sort"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "hooks install: GENVX_NO_NATIVE=1",
@@ -4908,7 +5462,8 @@
    ],
    "env": {
     "GENVX_NO_NATIVE": "1"
-   }
+   },
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "hooks uninstall: nothing installed",
@@ -5086,7 +5641,8 @@
    ],
    "env": {
     "GENVX_NO_NATIVE": "1"
-   }
+   },
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "setup: writes the global config and generates a key",
@@ -5467,7 +6023,8 @@
      "GENVX_KEY=[A-Za-z0-9+/]{43}=",
      "GENVX_KEY=<GENERATED>"
     ]
-   ]
+   ],
+   "handback": "shared hooks in a project with a package.json: the TypeScript rewrites it as JSON"
   },
   {
    "name": "setup: hooks path set globally, outside a repository",
@@ -5511,7 +6068,8 @@
      "GENVX_KEY=[A-Za-z0-9+/]{43}=",
      "GENVX_KEY=<GENERATED>"
     ]
-   ]
+   ],
+   "handback": "GENVX_NO_NATIVE is set"
   },
   {
    "name": "yargs: no arguments",
@@ -5519,7 +6077,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --help",
@@ -5529,7 +6088,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: -h",
@@ -5539,7 +6099,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --version",
@@ -5549,7 +6110,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: -v",
@@ -5559,7 +6121,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: version typed as a command",
@@ -5569,7 +6132,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: unknown command",
@@ -5579,7 +6143,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: push --help",
@@ -5590,7 +6155,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: branch --help",
@@ -5601,7 +6167,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: branch with an extra word",
@@ -5612,7 +6179,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: branch --version",
@@ -5623,7 +6191,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks without an action",
@@ -5633,7 +6202,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks with an unknown action",
@@ -5644,7 +6214,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks --help",
@@ -5655,7 +6226,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks status with an extra word and more",
@@ -5668,7 +6240,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: two commands",
@@ -5679,7 +6252,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: empty argument",
@@ -5689,7 +6263,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: flag before the command",
@@ -5718,7 +6293,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --yes false",
@@ -5748,7 +6324,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --yes=true",
@@ -5777,7 +6354,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: bundled short flags",
@@ -5807,7 +6385,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: -g=value",
@@ -5836,7 +6415,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --gitstore twice",
@@ -5868,7 +6448,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --gitstore without a value",
@@ -5897,7 +6478,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --gitstore= empty",
@@ -5926,7 +6508,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --gitstore with a quoted value",
@@ -5956,7 +6539,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: unknown flag",
@@ -5985,7 +6569,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --",
@@ -6014,7 +6599,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: extra word after pull",
@@ -6043,7 +6629,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --no-yes",
@@ -6072,7 +6659,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --no-encrypt=true pulls from a plaintext store without a key",
@@ -6100,7 +6688,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --noEncrypt pushes plaintext",
@@ -6128,7 +6717,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: --no-no-encrypt",
@@ -6158,7 +6748,8 @@
      "\\[\\d+ms\\]",
      "[<N>ms]"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks run with a second event",
@@ -6190,7 +6781,8 @@
      "\\d{4}-\\d\\d-\\d\\dT\\d\\d-\\d\\d-\\d\\d-\\d{3}Z",
      "<STAMP>"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks run with an empty event",
@@ -6221,7 +6813,8 @@
      "\\d{4}-\\d\\d-\\d\\dT\\d\\d-\\d\\d-\\d\\d-\\d{3}Z",
      "<STAMP>"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks run with a numeric event",
@@ -6252,7 +6845,8 @@
      "\\d{4}-\\d\\d-\\d\\dT\\d\\d-\\d\\d-\\d\\d-\\d{3}Z",
      "<STAMP>"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks status --mode shared",
@@ -6265,7 +6859,8 @@
    "setup": [
     "git init -q -b main",
     "git remote add origin https://github.com/Acme/App.git"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks install --mode without a value",
@@ -6280,7 +6875,8 @@
    ],
    "after": [
     "find . -name .git -prune -o -print | sort"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: hooks install with -y",
@@ -6296,7 +6892,8 @@
    "after": [
     "for f in .git/hooks/post-merge .git/hooks/post-checkout; do echo \"== $f\"; cat \"$f\"; echo \"==\"; done",
     "stat -c '%a %n' .git/hooks/post-merge .git/hooks/post-checkout"
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: setup --dir without a value",
@@ -6315,7 +6912,8 @@
      "GENVX_KEY=[A-Za-z0-9+/]{43}=",
      "GENVX_KEY=<GENERATED>"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   },
   {
    "name": "yargs: setup --hooks=false",
@@ -6340,7 +6938,8 @@
      "GENVX_KEY=[A-Za-z0-9+/]{43}=",
      "GENVX_KEY=<GENERATED>"
     ]
-   ]
+   ],
+   "handback": "yargs reads this in a way the Rust binary does not imitate"
   }
  ]
 }
