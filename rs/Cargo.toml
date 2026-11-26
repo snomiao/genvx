@@ -1,0 +1,15 @@
+[package]
+name = "genvx"
+version = "0.0.0"
+edition = "2021"
+description = ""
+license = "MIT"
+
+[[bin]]
+name = "genvx"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
