@@ -48,6 +48,9 @@ fn main() {
         Some(Command::HooksStatus) if native() => hooks_command(hooks::cmd_status),
         Some(Command::HooksInstall { mode }) if native() => hooks_command(|env| hooks::cmd_install(env, mode)),
         Some(Command::HooksUninstall) if native() => hooks_command(hooks::cmd_uninstall),
+        Some(Command::Setup { yes, gitstore, dir, hooks }) if native() => {
+            setup_command(yes, &setup::Options { dir, store: gitstore, hooks })
+        }
         _ => Err(HandBack),
     };
     match result {
@@ -164,7 +167,6 @@ fn hooks_run(event: Option<&str>) -> Exit {
 }
 
 /// `genvx setup` without questions.
-#[allow(dead_code)]
 fn setup_command(yes: bool, options: &setup::Options) -> Exit {
     if !yes && std::io::stdin().is_terminal() {
         return Err(HandBack);
