@@ -31,5 +31,12 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "rustify": {
+    "mode": "hybrid",
+    "bins": {
+      "genvx": "genvx"
+    },
+    "rootEnv": "GENVX_PACKAGE_ROOT"
   }
 }
