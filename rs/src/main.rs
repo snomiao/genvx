@@ -41,6 +41,9 @@ fn main() {
         // (rs/parity.json) pass. Each returns `Err(HandBack)` for an
         // invocation it does not take, before printing or changing anything.
         Some(Command::Branch) if native() => branch(),
+        Some(Command::Diff(flags)) if native() => sync_command(Direction::Diff, &flags),
+        Some(Command::Pull(flags)) if native() => sync_command(Direction::Pull, &flags),
+        Some(Command::Push(flags)) if native() => sync_command(Direction::Push, &flags),
         _ => Err(HandBack),
     };
     match result {
@@ -83,19 +86,13 @@ enum Direction {
 }
 
 /// `genvx push | pull | diff`: resolveGitstore, guardGitstore, withCleanup.
-#[allow(dead_code)]
 fn sync_command(direction: Direction, flags: &args::Sync) -> Exit {
     // A terminal on standard input means the TypeScript asks before it
     // writes. Asking is not ported.
     if direction != Direction::Diff && !flags.yes && std::io::stdin().is_terminal() {
         return Err(HandBack);
     }
-    // The TypeScript refuses to run inside a gitstore working copy. No
-    // parity case can stand in such a directory, so the JavaScript keeps it.
-    let cwd = std::env::current_dir().map_err(|_| HandBack)?;
-    if sync::inside_gitstore_dir(cwd.to_str().ok_or(HandBack)?) {
-        return Err(HandBack);
-    }
+    let cwd = std::env::current_dir().map_err(|_| HandBack)?.into_os_string().into_string().map_err(|_| HandBack)?;
     let mut env = Env::startup()?;
 
     // resolveGitstore()
@@ -115,7 +112,11 @@ fn sync_command(direction: Direction, flags: &args::Sync) -> Exit {
     };
     project::only_ascii(&gitstore)?;
 
-    // guardGitstore(): the project must not be the gitstore itself.
+    // guardGitstore(): not inside a gitstore working copy, and the project
+    // must not be the gitstore itself.
+    if sync::inside_gitstore_dir(&cwd) {
+        return error_exit("Cannot run genvx inside the gitstore directory");
+    }
     if let Ok(remote) = project::git_remote(&env) {
         project::only_ascii(&remote)?;
         if project::same_repository(&remote, &gitstore) {
