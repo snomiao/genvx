@@ -15,10 +15,11 @@
 //! Everything in `process.env` is also the environment of every `git` the
 //! program starts. Both steps are reproduced here, in the same order.
 //!
-//! bun's reader has quoting, `$VAR` expansion and multi-line values. Only the
-//! plain part of its syntax is taken here (see `read_plain_dotenv`); a file
-//! that uses anything else makes the whole invocation go back to the
-//! JavaScript, before anything has been printed or changed.
+//! bun's reader has `$VAR` expansion, escapes and multi-line values. Only the
+//! part of its syntax where a value is literally what stands in the file is
+//! taken here (see `read_plain_dotenv`); a file that uses anything else makes
+//! the whole invocation go back to the JavaScript, before anything has been
+//! printed or changed.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -59,6 +60,8 @@ impl Env {
             }
         }
         let home = home_dir()?;
+        // Every file below is looked up in the current directory.
+        std::env::current_dir().map_err(|_| HandBack)?;
         // bun reads bunfig.toml from the directory and from the user's
         // configuration; it can preload scripts and switch .env loading off.
         let mut bunfigs = vec!["bunfig.toml".to_string(), format!("{home}{}.bunfig.toml", std::path::MAIN_SEPARATOR)];
@@ -225,17 +228,25 @@ fn changes_the_runtime(key: &str) -> bool {
         || key.starts_with("NODE_")
 }
 
-/// Reads one of the files bun loads, if it is written in the plain subset
-/// where there is nothing to interpret:
+/// Reads one of the files bun loads, if it is written in the subset of bun's
+/// syntax where a value is simply the text that stands there:
 ///
-/// - empty lines, and lines starting with `#`;
-/// - `KEY=value` with KEY made of letters, digits and `_`, no space before
-///   `=`, and a value without quotes (`"`, `'`, `` ` ``), `#`, `$` or control
-///   characters. Spaces and tabs around the value are dropped, as bun does.
+/// - blank lines, and lines starting with `#`;
+/// - `KEY=value`: KEY made of letters, digits and `_`, no space before `=`.
+///   The value runs to the end of the line or to the first `#`, without the
+///   spaces and tabs around it;
+/// - `KEY="value"` and `KEY='value'`: the text between the quotes, kept as it
+///   is (spaces and `#` included). After the closing quote only spaces and a
+///   `#` comment may follow.
 ///
-/// Lines end in LF or CRLF. Anything else — `export`, indentation, a quoted
-/// or multi-line value, an inline comment, a variable reference, a BOM, the
-/// same key twice — is `HandBack`.
+/// A value, quoted or not, must hold no quote character, `$`, backslash
+/// (inside quotes) or control character: those are where bun starts to
+/// interpret (expansion, escapes, values over several lines). Lines end in LF
+/// or CRLF. Anything else — `export`, indentation, a key with `.` or `-`, a
+/// line without `=`, a BOM, the same key twice in a file — is `HandBack`.
+///
+/// Every rule here was read off bun 1.4.0 and is held by parity cases
+/// (`branch: .env …`, `config: …` in rs/parity.gen.mjs).
 fn read_plain_dotenv(path: &str) -> Result<Vec<(String, String)>, HandBack> {
     let meta = match fs::metadata(path) {
         Ok(meta) => meta,
@@ -249,6 +260,40 @@ fn read_plain_dotenv(path: &str) -> Result<Vec<(String, String)>, HandBack> {
     parse_plain_dotenv(std::str::from_utf8(&bytes).map_err(|_| HandBack)?)
 }
 
+const BLANKS: [char; 2] = [' ', '\t'];
+
+/// True for text bun takes literally wherever it stands: no quotes, no `$`,
+/// no control characters, no exotic white space.
+fn literal(text: &str) -> bool {
+    text.chars().all(|c| !c.is_control() && !matches!(c, '"' | '\'' | '`' | '$') && (c == ' ' || !js::is_space(c)))
+}
+
+/// The value bun gives to what follows `=` on a line.
+fn plain_value(raw: &str) -> Result<&str, HandBack> {
+    let raw = raw.trim_start_matches(BLANKS);
+    let (value, rest) = match raw.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
+            let (inner, rest) = raw[1..].split_once(quote).ok_or(HandBack)?;
+            if inner.contains('\\') {
+                return Err(HandBack);
+            }
+            (inner, rest.trim_start_matches(BLANKS))
+        }
+        _ => match raw.find('#') {
+            Some(at) => (raw[..at].trim_end_matches(BLANKS), &raw[at..]),
+            None => (raw.trim_end_matches(BLANKS), ""),
+        },
+    };
+    // `rest` is empty or a comment; a comment is ignored as long as it holds
+    // nothing bun might read as the start of something else.
+    let rest_is_comment = rest.is_empty() || (rest.starts_with('#') && literal(rest) && !rest.contains('\\'));
+    if literal(value) && rest_is_comment {
+        Ok(value)
+    } else {
+        Err(HandBack)
+    }
+}
+
 fn parse_plain_dotenv(text: &str) -> Result<Vec<(String, String)>, HandBack> {
     let mut vars: Vec<(String, String)> = Vec::new();
     for line in text.split('\n') {
@@ -256,20 +301,16 @@ fn parse_plain_dotenv(text: &str) -> Result<Vec<(String, String)>, HandBack> {
         if line.contains('\r') {
             return Err(HandBack);
         }
-        if line.is_empty() || line.starts_with('#') {
+        if line.trim_matches(BLANKS).is_empty() || line.starts_with('#') {
             continue;
         }
-        let (key, value) = line.split_once('=').ok_or(HandBack)?;
+        let (key, raw) = line.split_once('=').ok_or(HandBack)?;
         let key_is_plain = key.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
             && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        let value = value.trim_matches([' ', '\t']);
-        let value_is_plain = value.chars().all(|c| {
-            !c.is_control() && !matches!(c, '"' | '\'' | '`' | '#' | '$') && (c == ' ' || !(js::is_space(c) || c == '\u{85}'))
-        });
-        if !key_is_plain || !value_is_plain || changes_the_runtime(key) || vars.iter().any(|(k, _)| same_name(k, key)) {
+        if !key_is_plain || changes_the_runtime(key) || vars.iter().any(|(k, _)| same_name(k, key)) {
             return Err(HandBack);
         }
-        vars.push((key.to_string(), value.to_string()));
+        vars.push((key.to_string(), plain_value(raw)?.to_string()));
     }
     Ok(vars)
 }
@@ -286,6 +327,8 @@ mod tests {
         Ok(list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
     }
 
+    /// Each line and the value bun 1.4.0 gives it (recorded by running bun
+    /// in a directory holding the file and printing process.env).
     #[test]
     fn plain_dotenv_lines_are_read() {
         assert_eq!(parsed(""), pairs(&[]));
@@ -295,32 +338,96 @@ mod tests {
             parsed("URL=https://user:pa.ss@host.example.com:8080/a/b.git?x=1&y=2\nWIN=C:\\Users\\me\nU=héllo→世界"),
             pairs(&[("URL", "https://user:pa.ss@host.example.com:8080/a/b.git?x=1&y=2"), ("WIN", "C:\\Users\\me"), ("U", "héllo→世界")])
         );
+        // blank lines of spaces and tabs
+        assert_eq!(parsed("A1=1\n   \nA2=2\n\t\nA3=3\n \t \nA4=4\n"), pairs(&[("A1", "1"), ("A2", "2"), ("A3", "3"), ("A4", "4")]));
+        // quoted values
+        for (line, value) in [
+            ("K=\"a b\"", "a b"),
+            ("K=\" a \"", " a "),
+            ("K=\"a\"   ", "a"),
+            ("K=\"a\" # c", "a"),
+            ("K='a b'", "a b"),
+            ("K=''", ""),
+            ("K=\"\"", ""),
+            ("K=\"a#b\"", "a#b"),
+            ("K=\"a # b\"", "a # b"),
+            ("K='a # b'", "a # b"),
+            ("K=\"a=b\"", "a=b"),
+            ("K=' a '", " a "),
+            ("K=\"a b\" #x", "a b"),
+            ("K=\t\"a\"", "a"),
+            ("K=\"a\"\t# c", "a"),
+            ("K='a'#c", "a"),
+            ("K=\"x\"#c", "x"),
+            ("K=\"é→\"", "é→"),
+            ("K= \"x\"", "x"),
+            ("K=\"{[()]}<>|&;*?!~^%@:,./+-_\"", "{[()]}<>|&;*?!~^%@:,./+-_"),
+            ("K='{[()]}<>|&;*?!~^%@:,./+-_'", "{[()]}<>|&;*?!~^%@:,./+-_"),
+            // comments after a bare value
+            ("K=a # c", "a"),
+            ("K=a#c", "a"),
+            ("K= # c", ""),
+            ("K=#c", ""),
+            ("K=a b # c d", "a b"),
+            ("K=a  #", "a"),
+            ("K=a ;# c", "a ;"),
+            ("K=a\t# c", "a"),
+            ("K=a#", "a"),
+            ("K=a  # c # d", "a"),
+            ("K=a b#c", "a b"),
+            ("K=a=b # c=d", "a=b"),
+        ] {
+            assert_eq!(parsed(line), pairs(&[("K", value)]), "{line:?}");
+            assert_eq!(parsed(&format!("{line}\r\nL=1\r\n")), pairs(&[("K", value), ("L", "1")]), "{line:?} with CRLF");
+        }
     }
 
     #[test]
     fn anything_bun_would_interpret_goes_back() {
         for text in [
-            "A=\"quoted\"",
-            "A='quoted'",
-            "A=`quoted`",
-            "A=it's",
-            "A=1 # comment",
-            "A=a#b",
+            // bun expands, unescapes, or reads on past the line
             "A=$HOME/x",
             "A=cost$",
+            "A=\"$B\"",
+            "A='a$b'",
+            "A=\"a\\nb\"",
+            "A=\"a\\\\b\"",
+            "A='a\\nb'",
+            "A=\"a\\\"b\"",
+            "A=\"unterminated",
+            "A='unterminated",
+            "A=\"two\nlines\"",
+            "A=`backticks`",
+            // not probed closely enough to imitate
+            "A=\"a\"b",
+            "A=\"a\" \"b\"",
+            "A=a \"b\"",
+            "A=it's",
+            "A='it''s'",
+            "A=\"a'b\"",
+            "A='a\"b'",
+            "A=\"a`b\"",
+            "A=\"a\tb\"",
+            "A=1 # it's",
+            "A=1 # \"x\"",
+            "A=1 # $x",
+            "A=1 # a\\b",
+            "A=\"x\" # it's",
+            "A=a\tb",
+            "A=a\u{a0}b",
+            "A=\"a\u{3000}b\"",
             "export A=1",
             " A=1",
+            "  # indented comment",
             "A =1",
             "A",
             "A.B=1",
             "A-B=1",
             "1A=1",
             "A=1\nA=2",
-            "A=a\tb",
-            "A=a\u{a0}b",
             "A=1\rB=2",
             "\u{feff}A=1",
-            "   ",
+            // steer bun or the program itself
             "NODE_ENV=production",
             "BUN_ENV=test",
             "PATH=/x",

@@ -25,7 +25,7 @@ pub const ROOT_ENV: &str = "GENVX_PACKAGE_ROOT";
 
 /// Directory of the npm package this binary was installed with, if any.
 pub fn package_root() -> Option<PathBuf> {
-    // Installed and linked: the binary is <package>/bin/<command>, and the
+    // Installed and linked: the binary is <package>/rustify/<command>, and the
     // packer puts a package.json marker next to it.
     if let Ok(exe) = std::env::current_exe() {
         // macOS reports the path the command was started through, and for an
