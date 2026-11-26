@@ -16,6 +16,9 @@ on:
   pull_request:
     paths:
       - "rs/**"
+      # The parity job compares the Rust binary with the TypeScript, so a
+      # change to the TypeScript has to run it too.
+      - "src/**"
       - "package.json"
       - ".github/workflows/rust-npm-release.yml"
   workflow_dispatch:
@@ -57,8 +60,22 @@ jobs:
       smoke: genvx --version
       version: ${{ inputs.version }}
       npm-tag: ${{ inputs.npm_tag || 'latest' }}
-      # pre-build: cp default.config.yaml rs/          # steps cargo needs first
-      # js-build: bun install --frozen-lockfile && bun run build   # hybrid mode
+      # Proof that the Rust binary behaves like the TypeScript, in three parts:
+      # the parity cases (GENVX_PACKAGE_ROOT lets the binary hand back what
+      # it does not take), a check that the cases meant for Rust were really
+      # answered by Rust, and both implementations working on one store.
+      parity: >-
+        bun install --frozen-lockfile
+        && node "$RUSTIFY_PARITY" --cases rs/parity.json --ts "bun src/cli.ts"
+        --rs "env GENVX_PACKAGE_ROOT=$GITHUB_WORKSPACE $RUSTIFY_BIN_DIR/genvx"
+        && node rs/parity-native.mjs --runner "$RUSTIFY_PARITY" --rs "$RUSTIFY_BIN_DIR/genvx"
+        && bash rs/cross-compat.sh "$RUSTIFY_BIN_DIR/genvx"
+      # After installing, on every platform: one command the JavaScript still
+      # answers and one the binary answers itself (it prints nothing and
+      # exits 0 where genvx is not configured).
+      smoke-extra: |
+        genvx --help => genvx [command] [options]
+        genvx hooks run post-merge =>
 
   publish:
     needs: build
