@@ -468,13 +468,10 @@ pub fn cmd_status(env: &Env) -> Result<(), Stop> {
 /// `runHook(event)`: what the installed hooks call. Never fails and prints
 /// nothing unless files were written. `Err` only ever means hand back.
 pub fn cmd_run(env: &mut Env, event: &str) -> Result<(), HandBack> {
-    // The TypeScript stops silently inside a gitstore working copy. No parity
-    // case can stand in such a directory, so the JavaScript keeps that.
     let cwd = std::env::current_dir().map_err(|_| HandBack)?;
-    if sync::inside_gitstore_dir(cwd.to_str().ok_or(HandBack)?) {
-        return Err(HandBack);
-    }
-    let result = pull_for_hook(env);
+    // Inside a gitstore working copy (git running a hook for genvx's own
+    // clone): nothing to do.
+    let result = if sync::inside_gitstore_dir(cwd.to_str().ok_or(HandBack)?) { Ok(0) } else { pull_for_hook(env) };
     if let Err(Stop::HandBack) = result {
         return Err(HandBack);
     }

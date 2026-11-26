@@ -44,6 +44,7 @@ fn main() {
         Some(Command::Diff(flags)) if native() => sync_command(Direction::Diff, &flags),
         Some(Command::Pull(flags)) if native() => sync_command(Direction::Pull, &flags),
         Some(Command::Push(flags)) if native() => sync_command(Direction::Push, &flags),
+        Some(Command::HooksRun { event }) if native() => hooks_run(event.as_deref()),
         _ => Err(HandBack),
     };
     match result {
@@ -154,7 +155,6 @@ fn hooks_command(run: impl FnOnce(&Env) -> Result<(), Stop>) -> Exit {
 }
 
 /// `genvx hooks run [event]`: always exit code 0.
-#[allow(dead_code)]
 fn hooks_run(event: Option<&str>) -> Exit {
     let mut env = Env::startup()?;
     hooks::cmd_run(&mut env, event.unwrap_or("manual"))?;
