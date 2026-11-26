@@ -66,6 +66,7 @@ jobs:
       # answered by Rust, and both implementations working on one store.
       parity: >-
         bun install --frozen-lockfile
+        && node rs/parity.gen.mjs --check
         && node "$RUSTIFY_PARITY" --cases rs/parity.json --ts "bun src/cli.ts"
         --rs "env GENVX_PACKAGE_ROOT=$GITHUB_WORKSPACE $RUSTIFY_BIN_DIR/genvx"
         && node rs/parity-native.mjs --runner "$RUSTIFY_PARITY" --rs "$RUSTIFY_BIN_DIR/genvx"
