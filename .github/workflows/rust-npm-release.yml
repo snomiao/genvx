@@ -1,0 +1,78 @@
+# Release workflow for a project on the rustify pipeline.
+# Written by `rustify vendor`; adapt the values under `with:`.
+#
+# A pull request builds every platform and smoke-tests the install on Linux,
+# macOS and Windows without publishing. Publishing happens only when this
+# workflow is started with `publish` on.
+#
+# One-time setup on npmjs.com for publishing without a token: package →
+# Settings → Trusted Publisher → GitHub Actions, this repository, and the
+# filename of the workflow a release STARTS from (this file when you run it by
+# hand; the calling workflow when another workflow calls this one).
+
+name: rust-npm-release
+
+on:
+  pull_request:
+    paths:
+      - "rs/**"
+      - "package.json"
+      - ".github/workflows/rust-npm-release.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without a leading v (default: the version in Cargo.toml)"
+        required: false
+        type: string
+      npm_tag:
+        description: "npm dist-tag (latest, beta, ...)"
+        required: false
+        default: latest
+        type: string
+      publish:
+        description: "Publish to npm. Off = build, pack and smoke-test only."
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        type: string
+      npm_tag:
+        required: false
+        default: latest
+        type: string
+      publish:
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1
+    with:
+      manifest: rs/Cargo.toml
+      bins: genvx
+      smoke: genvx --version
+      version: ${{ inputs.version }}
+      npm-tag: ${{ inputs.npm_tag || 'latest' }}
+      # pre-build: cp default.config.yaml rs/          # steps cargo needs first
+      # js-build: bun install --frozen-lockfile && bun run build   # hybrid mode
+
+  publish:
+    needs: build
+    if: inputs.publish == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: snomiao/rustify/actions/publish@releases/v1
+
+  verify:
+    needs: [build, publish]
+    uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@releases/v1
+    with:
+      smoke: genvx --version
