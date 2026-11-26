@@ -45,6 +45,9 @@ fn main() {
         Some(Command::Pull(flags)) if native() => sync_command(Direction::Pull, &flags),
         Some(Command::Push(flags)) if native() => sync_command(Direction::Push, &flags),
         Some(Command::HooksRun { event }) if native() => hooks_run(event.as_deref()),
+        Some(Command::HooksStatus) if native() => hooks_command(hooks::cmd_status),
+        Some(Command::HooksInstall { mode }) if native() => hooks_command(|env| hooks::cmd_install(env, mode)),
+        Some(Command::HooksUninstall) if native() => hooks_command(hooks::cmd_uninstall),
         _ => Err(HandBack),
     };
     match result {
@@ -148,7 +151,6 @@ fn finish(result: Result<(), Stop>, after: fn()) -> Exit {
 }
 
 /// `genvx hooks install | uninstall | status`
-#[allow(dead_code)]
 fn hooks_command(run: impl FnOnce(&Env) -> Result<(), Stop>) -> Exit {
     let env = Env::startup()?;
     finish(run(&env), || {})
