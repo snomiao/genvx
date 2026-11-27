@@ -1,5 +1,27 @@
 # genvx
 
+> [!WARNING]
+> **genvx is deprecated.** It still works, but it is no longer developed. Use
+> [**dotenvdotenc**](https://github.com/snomiao/dotenvdotenc) (`dede`) instead.
+>
+> The two keep `.env` files safe in different ways. genvx copies them to a
+> separate private git repository, encrypted with its own key. dotenvdotenc
+> keeps a [dotenvx](https://dotenvx.com)-encrypted twin of each file
+> (`.env.local.enc`) in the project's own repository, next to the gitignored
+> plaintext, so the secrets travel with the code and nothing else needs
+> setting up:
+>
+> ```sh
+> bun add -g dotenvdotenc   # or: npm i -g dotenvdotenc
+> dede setup                # .gitignore rules and a pre-commit guard
+> dede enc                  # .env* → .env*.enc, then commit the .enc files
+> dede dec                  # after a pull: .env*.enc → .env*
+> ```
+>
+> To move a project over: `genvx pull` one last time, then `dede setup` and
+> `dede enc` in the project. Share the private key in `.env.keys` the way you
+> share other secrets; it is gitignored and never committed.
+
 A simple CLI tool to save and load `.env*` files across projects using a private git repository.
 
 ## Features
